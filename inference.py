@@ -275,6 +275,7 @@ def print_step(ep: int, step_num: int, reward: float):
 
 def print_end(ep: int, total_reward: float, step_num: int):
     score = round(total_reward / max(step_num, 1), 4)
+    score = max(0.0001, min(0.9999, score))  # strictly between 0 and 1
     print(f"[END] task=episode_{ep} score={score} steps={step_num}", flush=True)
 
 # ── Main loop ────────────────────────────────────────────────────────────────
