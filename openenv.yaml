@@ -1,0 +1,75 @@
+spec_version: 1
+
+name: email-triage-env
+description: >
+  A real-world RL environment where an AI agent learns to triage customer
+  support emails.
+
+type: step-reset
+
+runtime:
+  type: docker
+
+app:
+  module: server.app
+  object: app
+
+port: 7860
+
+timeout:
+  episode: 300
+  step: 30
+
+max_steps: 10
+
+tasks:
+  - id: 1
+    name: email_classification
+    difficulty: easy
+    reward_range: [0.0, 1.0]
+    description: Classify email into correct category
+
+  - id: 2
+    name: prioritization_and_routing
+    difficulty: medium
+    reward_range: [0.0, 1.0]
+    description: Classify, prioritize, and route
+
+  - id: 3
+    name: full_triage_with_reply
+    difficulty: hard
+    reward_range: [0.0, 1.0]
+    description: Full triage with reply
+
+action_space:
+  type: structured
+  fields:
+    category:
+      type: string
+      enum: [billing, technical, general, complaint, refund, phishing]
+    priority:
+      type: string
+      enum: [P1, P2, P3]
+    department:
+      type: string
+      # Must match models.py Literal and inference.py DEPT_MAP exactly
+      enum: [billing_team, technical_team, customer_success, returns, security]
+    draft_reply:
+      type: string
+      nullable: true
+
+observation_space:
+  type: structured
+  fields:
+    email_id: string
+    subject: string
+    body: string
+    sender: string
+    task_id: integer
+    task_description: string
+    reward: float
+    done: boolean
+    feedback: string
+
+supports_concurrent_sessions: true
+max_concurrent_envs: 5
