@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "email-triage-env"
+version = "1.0.0"
+description = "A real-world RL environment for autonomous customer email triage"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.urls]
+Homepage = "https://huggingface.co/spaces/krishshah07/email-triage-env"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*"]
