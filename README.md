@@ -1,3 +1,25 @@
+---
+title: Email Triage OpenEnv
+emoji: 🚀
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+short_description: Confidence-Aware Autonomous Email Routing using Hybrid Reinforcement Learning
+tags:
+  - reinforcement-learning
+  - email-triage
+  - autonomous-agents
+  - nlp
+  - fastapi
+  - openenv
+  - rl-environment
+  - llm
+fullWidth: true
+pinned: false
+startup_duration_timeout: 30m
+---
+
 # 🚀 Email Triage OpenEnv
 
 **Confidence‑Aware Autonomous Email Routing using Hybrid Reinforcement Learning**
