@@ -5,7 +5,7 @@ colorFrom: blue
 colorTo: indigo
 sdk: docker
 app_port: 7860
-short_description: Confidence-Aware Autonomous Email Routing using Hybrid Reinforcement Learning
+short_description: Confidence-Aware Autonomous Email Routing using Hybrid RL
 tags:
   - reinforcement-learning
   - email-triage
