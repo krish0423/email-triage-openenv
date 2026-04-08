@@ -38,7 +38,7 @@ async def health():
 @app.post("/reset")
 async def reset():
     obs = env.reset()
-    return obs  # already a dict
+    return obs
 
 
 # ------------------ STEP ------------------
@@ -46,7 +46,7 @@ async def reset():
 async def step(action: TriageAction):
     try:
         obs = env.step(action)
-        return obs  # already a dict
+        return obs
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -89,6 +89,11 @@ async def list_tasks():
 
 
 # ------------------ MAIN ------------------
-if __name__ == "__main__":
+def main():
+    """Callable entry point for [project.scripts] and programmatic use."""
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=False)
+
+
+if __name__ == "__main__":
+    main()
