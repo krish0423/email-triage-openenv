@@ -1,6 +1,6 @@
 # env.py — Email Triage Environment (final, pydantic-safe)
 # - Preserves internal negative signal via raw_reward clipped to [-1.0, 1.0]
-# - Returns external reward clamped to [0.0, 1.0] for API compliance
+# - Returns external reward clamped to (0.01, 0.99) — strictly between 0 and 1
 # - Instance-local RNG for reproducibility
 # - Repetition penalty for draft replies
 # - Logs both raw_reward and external_reward in JSONL
@@ -169,7 +169,7 @@ class EmailTriageEnvironment:
         self._last_email_id = self._current_email.get("email_id") if self._current_email else None
 
         return self._make_observation(
-            reward=0.0,
+            reward=0.01,
             raw_reward=0.0,
             done=False,
             feedback="New episode started. Use caution for phishing signals."
@@ -182,7 +182,7 @@ class EmailTriageEnvironment:
         valid, msg = _validate_action_fields(action)
         if not valid:
             raw_reward = -0.5
-            external_reward = round(max(0.0, min(1.0, raw_reward)), 4)
+            external_reward = round(max(0.01, min(0.99, raw_reward)), 4)
             feedback = f"Invalid action: {msg}"
             self._state.steps += 1
             self._state.total_reward += external_reward
@@ -314,7 +314,7 @@ class EmailTriageEnvironment:
 
         raw_reward = max(-1.0, min(1.0, reward))
         raw_reward = round(raw_reward, 4)
-        external_reward = round(max(0.0, min(1.0, raw_reward)), 4)
+        external_reward = round(max(0.01, min(0.99, raw_reward)), 4)
 
         self._state.total_reward += external_reward
         self._state.steps += 1
