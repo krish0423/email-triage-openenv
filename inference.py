@@ -281,7 +281,8 @@ def print_step(step_num: int, action: dict, reward: float, done: bool, error: st
     action_str = f"triage(category={action.get('category')},priority={action.get('priority')},dept={action.get('department')})"
     error_str = error if error else "null"
     done_str = "true" if done else "false"
-    print(f"[STEP] step={step_num} action={action_str} reward={reward:.2f} done={done_str} error={error_str}", flush=True)
+    r = max(0.01, min(0.99, reward))  # clamp here too - validator checks STEP rewards!
+    print(f"[STEP] step={step_num} action={action_str} reward={r:.2f} done={done_str} error={error_str}", flush=True)
 
 def print_end(success: bool, step_num: int, rewards: list):
     success_str = "true" if success else "false"
