@@ -41,12 +41,19 @@ VALID_DEPARTMENTS = {"billing_team", "technical_team", "customer_success", "secu
 DATASET = load_dataset()
 ENV_HELPER = DatasetEnvHelper(DATASET)
 
+DEPT_REMAP = {
+    "tech_support": "technical_team",
+    "billing": "billing_team",
+    "security_team": "security",
+}
+
 def _normalize_ground_truth(dataset):
     for i, e in enumerate(dataset):
         gt = e.get("ground_truth", {}) or {}
         gt.setdefault("category", e.get("true_category"))
         gt.setdefault("priority", e.get("true_priority"))
-        gt.setdefault("department", e.get("true_department"))
+        dept = DEPT_REMAP.get(e.get("true_department"), e.get("true_department"))
+        gt.setdefault("department", dept)
         gt.setdefault("disguised", bool(e.get("disguised", False) or e.get("is_adversarial", False)))
         e["ground_truth"] = gt
         if "email_id" not in e:
@@ -301,7 +308,7 @@ class EmailTriageEnvironment:
                 else:
                     try:
                         score, reason = llm_judge_score(email["subject"], email["body"], draft)
-                        norm = _normalize_llm_score(score, scale=5.0)
+                        norm = _normalize_llm_score(score, scale=1.0)
                         reward += norm * 0.4
                         feedback_items.append(f"Reply quality (LLM): {norm:.3f} ({reason})")
                         reason_tags.append("llm_judge")
