@@ -1,6 +1,6 @@
 """
 FastAPI server for Email Triage OpenEnv environment.
-Endpoints: POST /reset, POST /step, GET /state, GET /health, GET /metadata, GET /schema
+Endpoints: POST /reset, POST /step, GET /state, GET /health, GET /metadata, GET /schema, GET /tasks
 """
 
 import sys
@@ -9,7 +9,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
@@ -23,18 +22,8 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Initialize environment
 env = EmailTriageEnvironment()
 
-# Task ID mapping: string task IDs → internal task phases
 TASK_MAP = {
     "task1_email_classification": 1,
     "task2_prioritization_routing": 2,
@@ -42,9 +31,17 @@ TASK_MAP = {
 }
 
 
-# ── Request Models ──────────────────────────────
 class ResetRequest(BaseModel):
     task_id: Optional[str] = None
+
+
+class StepRequest(BaseModel):
+    action: Optional[TriageAction] = None
+    # Also accept flat action fields for backward compatibility
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    department: Optional[str] = None
+    draft_reply: Optional[str] = None
 
 
 # ------------------ ROOT ------------------
@@ -65,7 +62,7 @@ async def metadata():
     return {
         "name": "email-triage-env",
         "version": "1.0.0",
-        "description": "A real-world RL environment for autonomous customer email triage using hybrid reinforcement learning.",
+        "description": "A real-world RL environment for autonomous customer email triage.",
         "author": "Krish Shah",
         "license": "MIT",
         "tasks": [
@@ -75,7 +72,7 @@ async def metadata():
                 "difficulty": "easy",
                 "max_steps": 10,
                 "description": "Classify an email into the correct category.",
-                "score_range": [0.01, 0.99], 
+                "score_range": [0.01, 0.99],
                 "grader_dimensions": ["classification_accuracy"],
             },
             {
@@ -85,25 +82,16 @@ async def metadata():
                 "max_steps": 10,
                 "description": "Classify, set priority, and route to the correct department.",
                 "score_range": [0.01, 0.99],
-                "grader_dimensions": [
-                    "classification_accuracy",
-                    "priority_accuracy",
-                    "routing_accuracy",
-                ],
+                "grader_dimensions": ["classification_accuracy", "priority_accuracy", "routing_accuracy"],
             },
             {
                 "id": "task3_full_triage_reply",
                 "name": "Full Triage with Draft Reply",
                 "difficulty": "hard",
                 "max_steps": 10,
-                "description": "Full triage including a professional draft response to the customer.",
+                "description": "Full triage including a professional draft response.",
                 "score_range": [0.01, 0.99],
-                "grader_dimensions": [
-                    "classification_accuracy",
-                    "priority_accuracy",
-                    "routing_accuracy",
-                    "reply_quality",
-                ],
+                "grader_dimensions": ["classification_accuracy", "priority_accuracy", "routing_accuracy", "reply_quality"],
             },
         ],
     }
@@ -124,16 +112,58 @@ async def schema():
 async def reset(req: Optional[ResetRequest] = None):
     task_id_str = req.task_id if req else None
     phase = TASK_MAP.get(task_id_str, 1) if task_id_str else 1
-    obs = env.reset(phase=phase)
-    return obs
+    obs_dict = env.reset(phase=phase)
+
+    # Extract reward and done from the flat obs dict
+    reward_val = max(0.01, min(0.99, float(obs_dict.get("reward", 0.01))))
+
+    # Return in standard OpenEnv format: {observation, reward, done, info}
+    return {
+        "observation": obs_dict,
+        "reward": {
+            "value": reward_val,
+            "step_reward": reward_val,
+            "cumulative": reward_val,
+            "feedback": obs_dict.get("feedback", ""),
+        },
+        "done": obs_dict.get("done", False),
+        "info": {},
+    }
 
 
 # ------------------ STEP ------------------
 @app.post("/step")
-async def step(action: TriageAction):
+async def step(req: StepRequest):
     try:
-        obs = env.step(action)
-        return obs
+        # Build TriageAction from either nested action or flat fields
+        if req.action:
+            action = req.action
+        else:
+            action = TriageAction(
+                category=req.category,
+                priority=req.priority,
+                department=req.department,
+                draft_reply=req.draft_reply,
+            )
+
+        obs_dict = env.step(action)
+
+        # Extract and clamp reward
+        reward_val = max(0.01, min(0.99, float(obs_dict.get("reward", 0.01))))
+        cumulative = max(0.01, min(0.99, float(env.state().total_reward)))
+
+        # Return in standard OpenEnv format
+        return {
+            "observation": obs_dict,
+            "reward": {
+                "value": reward_val,
+                "step_reward": reward_val,
+                "cumulative": cumulative,
+                "feedback": obs_dict.get("feedback", ""),
+            },
+            "done": obs_dict.get("done", False),
+            "info": {},
+        }
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -156,7 +186,6 @@ async def list_tasks():
                 "difficulty": "easy",
                 "description": "Classify an email into the correct category.",
                 "reward_range": [0.01, 0.99],
-                "grader_dimensions": ["classification_accuracy"],
             },
             {
                 "task_id": "task2_prioritization_routing",
@@ -164,24 +193,13 @@ async def list_tasks():
                 "difficulty": "medium",
                 "description": "Classify, set priority, and route to the correct department.",
                 "reward_range": [0.01, 0.99],
-                "grader_dimensions": [
-                    "classification_accuracy",
-                    "priority_accuracy",
-                    "routing_accuracy",
-                ],
             },
             {
                 "task_id": "task3_full_triage_reply",
                 "name": "Full Triage with Draft Reply",
                 "difficulty": "hard",
-                "description": "Full triage including a professional draft response to the customer.",
+                "description": "Full triage including a professional draft response.",
                 "reward_range": [0.01, 0.99],
-                "grader_dimensions": [
-                    "classification_accuracy",
-                    "priority_accuracy",
-                    "routing_accuracy",
-                    "reply_quality",
-                ],
             },
         ]
     }
@@ -189,7 +207,6 @@ async def list_tasks():
 
 # ------------------ MAIN ------------------
 def main():
-    """Callable entry point for [project.scripts] and programmatic use."""
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run("server.app:app", host="0.0.0.0", port=port, reload=False)
 
