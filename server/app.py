@@ -1,12 +1,16 @@
 """
 FastAPI server for Email Triage OpenEnv environment.
-Endpoints: POST /reset, POST /step, GET /state, GET /health
+Endpoints: POST /reset, POST /step, GET /state, GET /health, GET /metadata, GET /schema
 """
 
-import sys, os
+import sys
+import os
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 import uvicorn
 
 from models import TriageAction, TriageObservation, TriageState
@@ -21,6 +25,18 @@ app = FastAPI(
 # Initialize environment
 env = EmailTriageEnvironment()
 
+# Task ID mapping: string task IDs → internal task phases
+TASK_MAP = {
+    "task1_email_classification": 1,
+    "task2_prioritization_routing": 2,
+    "task3_full_triage_reply": 3,
+}
+
+
+# ── Request Models ──────────────────────────────
+class ResetRequest(BaseModel):
+    task_id: Optional[str] = None
+
 
 # ------------------ ROOT ------------------
 @app.get("/")
@@ -31,13 +47,75 @@ async def root():
 # ------------------ HEALTH ------------------
 @app.get("/health")
 async def health():
-    return {"status": "ok", "env": "email_triage"}
+    return {"status": "ok", "env": "email-triage-env"}
+
+
+# ------------------ METADATA ------------------
+@app.get("/metadata")
+async def metadata():
+    return {
+        "name": "email-triage-env",
+        "version": "1.0.0",
+        "description": "A real-world RL environment for autonomous customer email triage using hybrid reinforcement learning.",
+        "author": "Krish Shah",
+        "license": "MIT",
+        "tasks": [
+            {
+                "id": "task1_email_classification",
+                "name": "Email Classification",
+                "difficulty": "easy",
+                "max_steps": 10,
+                "description": "Classify an email into the correct category.",
+                "score_range": [0.0, 1.0],
+                "grader_dimensions": ["classification_accuracy"],
+            },
+            {
+                "id": "task2_prioritization_routing",
+                "name": "Prioritization & Routing",
+                "difficulty": "medium",
+                "max_steps": 10,
+                "description": "Classify, set priority, and route to the correct department.",
+                "score_range": [0.0, 1.0],
+                "grader_dimensions": [
+                    "classification_accuracy",
+                    "priority_accuracy",
+                    "routing_accuracy",
+                ],
+            },
+            {
+                "id": "task3_full_triage_reply",
+                "name": "Full Triage with Draft Reply",
+                "difficulty": "hard",
+                "max_steps": 10,
+                "description": "Full triage including a professional draft response to the customer.",
+                "score_range": [0.0, 1.0],
+                "grader_dimensions": [
+                    "classification_accuracy",
+                    "priority_accuracy",
+                    "routing_accuracy",
+                    "reply_quality",
+                ],
+            },
+        ],
+    }
+
+
+# ------------------ SCHEMA ------------------
+@app.get("/schema")
+async def schema():
+    return {
+        "action": TriageAction.model_json_schema(),
+        "observation": TriageObservation.model_json_schema(),
+        "state": TriageState.model_json_schema(),
+    }
 
 
 # ------------------ RESET ------------------
 @app.post("/reset")
-async def reset():
-    obs = env.reset()
+async def reset(req: Optional[ResetRequest] = None):
+    task_id_str = req.task_id if req else None
+    phase = TASK_MAP.get(task_id_str, 1) if task_id_str else 1
+    obs = env.reset(phase=phase)
     return obs
 
 
@@ -64,26 +142,37 @@ async def list_tasks():
     return {
         "tasks": [
             {
-                "task_id": 1,
+                "task_id": "task1_email_classification",
                 "name": "Email Classification",
                 "difficulty": "easy",
                 "description": "Classify an email into the correct category.",
-                # FIX: reward_range must be strictly open (0, 1) — validator rejects 0.0 and 1.0
-                "reward_range": [0.0001, 0.9999],
+                "reward_range": [0.0, 1.0],
+                "grader_dimensions": ["classification_accuracy"],
             },
             {
-                "task_id": 2,
+                "task_id": "task2_prioritization_routing",
                 "name": "Prioritization & Routing",
                 "difficulty": "medium",
                 "description": "Classify, set priority, and route to the correct department.",
-                "reward_range": [0.0001, 0.9999],
+                "reward_range": [0.0, 1.0],
+                "grader_dimensions": [
+                    "classification_accuracy",
+                    "priority_accuracy",
+                    "routing_accuracy",
+                ],
             },
             {
-                "task_id": 3,
+                "task_id": "task3_full_triage_reply",
                 "name": "Full Triage with Draft Reply",
                 "difficulty": "hard",
                 "description": "Full triage including a professional draft response to the customer.",
-                "reward_range": [0.0001, 0.9999],
+                "reward_range": [0.0, 1.0],
+                "grader_dimensions": [
+                    "classification_accuracy",
+                    "priority_accuracy",
+                    "routing_accuracy",
+                    "reply_quality",
+                ],
             },
         ]
     }

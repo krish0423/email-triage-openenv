@@ -1,24 +1,38 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=77.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "email-triage-env"
 version = "1.0.0"
-description = "A real-world RL environment for autonomous customer email triage"
-requires-python = ">=3.11"
+description = "OpenEnv environment for confidence-aware autonomous email triage"
 readme = "README.md"
-license = { text = "MIT" }
-dependencies = [
-  "openenv-core>=0.2.0",
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "Krish Shah"},
 ]
-
-[project.urls]
-Homepage = "https://huggingface.co/spaces/krishshah07/email-triage-env"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.0.0",
+    "requests>=2.25.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "openenv-core>=0.2.0",
+]
 
 [project.scripts]
 server = "server.app:main"
 
+[project.urls]
+Homepage = "https://huggingface.co/spaces/krishshah07/email-triage-env"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "httpx>=0.24.0",
+]
+
 [tool.setuptools.packages.find]
-where = ["."]
 include = ["server*"]

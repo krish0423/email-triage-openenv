@@ -7,7 +7,7 @@ from typing import Optional, Literal, Dict, Any, List
 class TriageAction(BaseModel):
     """Action submitted by the agent for any task."""
     # Task 1 – classify (phishing added as a security-aware category)
-    category: Optional[Literal["billing", "technical", "general", "complaint", "refund", "phishing"]] = None
+    category: Optional[Literal["billing", "technical", "general", "complaint", "refund", "phishing", "account"]] = None
 
     # Task 2 – classify + prioritize + route
     priority: Optional[Literal["P1", "P2", "P3"]] = None

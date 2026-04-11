@@ -420,7 +420,7 @@ class EmailTriageEnvironment:
             "sender": e.get("sender", ""),
             "task_id": task_id,
             "task_description": f"TASK {task_id}: " + ("Classify" if task_id == 1 else "Triage and reply"),
-            "reward": reward,
+            "reward": _safe_score(reward),  # FIX: never 0.0 or 1.0
             "done": done,
             "feedback": feedback,
             "feature_hints": feature_hints,
