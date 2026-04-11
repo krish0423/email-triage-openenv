@@ -386,12 +386,13 @@ def run_task(task_id: str) -> float:
                 result = resp.json()
             except Exception as e:
                 error_msg = str(e)
-                emit_step(step_count, action_str, 0.0, True, error_msg)
-                step_rewards.append(0.0)
+                emit_step(step_count, action_str, 0.01, True, error_msg)
+                step_rewards.append(0.01)
                 break
 
             obs = result
-            step_reward = float(obs.get("reward", 0.0))
+            step_reward = float(obs.get("reward", 0.01))
+            step_reward = max(0.01, min(0.99, step_reward))
             done = obs.get("done", False)
             cumulative_reward += step_reward
             step_rewards.append(step_reward)
@@ -411,7 +412,7 @@ def run_task(task_id: str) -> float:
     except Exception as e:
         if step_count == 0:
             step_count = 1
-            step_rewards.append(0.0)
+            step_rewards.append(0.01)
 
     finally:
         success = final_score > 0.0 and len(step_rewards) > 0
