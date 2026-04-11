@@ -68,21 +68,22 @@ async def list_tasks():
                 "name": "Email Classification",
                 "difficulty": "easy",
                 "description": "Classify an email into the correct category.",
-                "reward_range": [0.0, 1.0],
+                # FIX: reward_range must be strictly open (0, 1) — validator rejects 0.0 and 1.0
+                "reward_range": [0.0001, 0.9999],
             },
             {
                 "task_id": 2,
                 "name": "Prioritization & Routing",
                 "difficulty": "medium",
                 "description": "Classify, set priority, and route to the correct department.",
-                "reward_range": [0.0, 1.0],
+                "reward_range": [0.0001, 0.9999],
             },
             {
                 "task_id": 3,
                 "name": "Full Triage with Draft Reply",
                 "difficulty": "hard",
                 "description": "Full triage including a professional draft response to the customer.",
-                "reward_range": [0.0, 1.0],
+                "reward_range": [0.0001, 0.9999],
             },
         ]
     }
