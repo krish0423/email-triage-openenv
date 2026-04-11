@@ -1,13 +1,12 @@
 # env.py — Email Triage Environment (final, pydantic-safe)
 # - Preserves internal negative signal via raw_reward clipped to [-1.0, 1.0]
 # - Returns external reward clamped to (0.01, 0.99) — strictly between 0 and 1
+# - Final step returns the normalized cumulative score for the whole task
 # - Instance-local RNG for reproducibility
 # - Repetition penalty for draft replies
 # - Logs both raw_reward and external_reward in JSONL
 # - Hard-negative replay with limits
 # - Basic action validation and defensive guards
-# Note: returns plain dict observations (includes raw_reward) to avoid setting
-# extra attributes on Pydantic models that don't declare them.
 
 import uuid
 import random
@@ -100,6 +99,10 @@ def _validate_action_fields(action: TriageAction) -> Tuple[bool, str]:
 def _sentence_split(text: str) -> list:
     return [s.strip() for s in re.split(r'[.!?]\s*', text) if s.strip()]
 
+def _clamp(r: float) -> float:
+    """Clamp reward to strictly open interval (0, 1). Safe for 2dp formatting."""
+    return round(max(0.01, min(0.99, float(r))), 4)
+
 # -------------------------
 # Environment
 # -------------------------
@@ -112,10 +115,14 @@ class EmailTriageEnvironment:
         self._replay_counts = {}
         self._last_email_id: Optional[str] = None
         self._rng = random.Random(seed if seed is not None else EPSILON_SEED)
+        # Accumulate raw scores per step within an episode for final normalization
+        self._episode_raw_scores = []
 
     def reset(self, phase: int = 1, seed: Optional[int] = None) -> Dict[str, Any]:
         if seed is not None:
             self._rng = random.Random(seed)
+
+        self._episode_raw_scores = []
 
         phishing_bias = min(PHISHING_BIAS_MAX, PHISHING_BIAS_BASE + self._index * PHISHING_BIAS_STEP)
         if phase >= 3:
@@ -182,9 +189,22 @@ class EmailTriageEnvironment:
         valid, msg = _validate_action_fields(action)
         if not valid:
             raw_reward = -0.5
-            external_reward = round(max(0.01, min(0.99, raw_reward)), 4)
             feedback = f"Invalid action: {msg}"
             self._state.steps += 1
+            self._episode_raw_scores.append(raw_reward)
+
+            task_id = self._state.current_task_id
+            if task_id < 3:
+                self._state.current_task_id += 1
+                done = False
+                external_reward = _clamp(raw_reward)
+            else:
+                done = True
+                self._state.completed = True
+                # On final step, compute normalized cumulative score
+                avg = sum(self._episode_raw_scores) / len(self._episode_raw_scores)
+                external_reward = _clamp(avg)
+
             self._state.total_reward += external_reward
             _log_step({
                 "event": "step_invalid_action",
@@ -207,13 +227,6 @@ class EmailTriageEnvironment:
                 "task_id": self._state.current_task_id,
                 "reason_tags": ["invalid_action"]
             })
-            task_id = self._state.current_task_id
-            if task_id < 3:
-                self._state.current_task_id += 1
-                done = False
-            else:
-                done = True
-                self._state.completed = True
             return self._make_observation(reward=external_reward, raw_reward=raw_reward, done=done, feedback=feedback)
 
         task_id = self._state.current_task_id
@@ -314,17 +327,26 @@ class EmailTriageEnvironment:
 
         raw_reward = max(-1.0, min(1.0, reward))
         raw_reward = round(raw_reward, 4)
-        external_reward = round(max(0.01, min(0.99, raw_reward)), 4)
 
-        self._state.total_reward += external_reward
+        # Accumulate raw score for this step
+        self._episode_raw_scores.append(raw_reward)
+
         self._state.steps += 1
 
         if task_id < 3:
             self._state.current_task_id += 1
             done = False
+            # For intermediate steps, clamp the individual step reward
+            external_reward = _clamp(raw_reward)
         else:
             done = True
             self._state.completed = True
+            # On final step, compute normalized cumulative score for the whole task
+            # This ensures the task-level score is strictly in (0, 1)
+            avg = sum(self._episode_raw_scores) / len(self._episode_raw_scores)
+            external_reward = _clamp(avg)
+
+        self._state.total_reward += external_reward
 
         self.history.append({
             "timestamp": time.time(),
@@ -378,10 +400,6 @@ class EmailTriageEnvironment:
         return TriageState(episode_id="not_started", current_task_id=0, total_reward=0.0, steps=0, completed=False)
 
     def _make_observation(self, reward: float, raw_reward: float, done: bool, feedback: str) -> Dict[str, Any]:
-        """
-        Return a plain dict observation (not a Pydantic model) so we can include
-        raw_reward without attempting to set an undeclared field on TriageObservation.
-        """
         e = self._current_email or {}
         task_id = self._state.current_task_id if self._state else 0
 
@@ -407,12 +425,10 @@ class EmailTriageEnvironment:
             "done": done,
             "feedback": feedback,
             "feature_hints": feature_hints,
-            # include additional metadata useful to the agent
             "episode_id": self._state.episode_id if self._state else None,
             "draft_word_count": None
         }
 
-        # include raw_reward explicitly (internal training signal)
         obs_dict["raw_reward"] = raw_reward
 
         return obs_dict
