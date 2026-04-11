@@ -19,10 +19,13 @@ from typing import Optional
 from openai import OpenAI
 
 # ── Configuration ───────────────────────────────
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.groq.com/openai/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "llama-3.1-8b-instant")
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "llama-3.1-8b-instant")
+HF_TOKEN = os.getenv("HF_TOKEN")
 ENV_URL = os.environ.get("ENV_URL", "http://localhost:7860")
+
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
 
 TASKS = [
     "task1_email_classification",
@@ -30,15 +33,26 @@ TASKS = [
     "task3_full_triage_reply",
 ]
 
-# ── Structured Logging (matches validator format exactly) ───────
+ENV_NAME = "email-triage-env"
+
+# ── Structured Logging ──────────────────────────
+# Official format:
+#   [START] task=<task_name> env=<benchmark> model=<model_name>
+#   [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+#   [END]   success=<true|false> steps=<n> rewards=<r1,r2,...,rn>
+
 def emit_start(task_id: str) -> None:
-    print(f"[START] task={task_id}", flush=True)
+    print(f"[START] task={task_id} env={ENV_NAME} model={MODEL_NAME}", flush=True)
 
-def emit_step(step: int, step_reward: float) -> None:
-    print(f"[STEP] step={step} reward={step_reward}", flush=True)
+def emit_step(step: int, action_str: str, reward: float, done: bool, error: Optional[str] = None) -> None:
+    done_str = "true" if done else "false"
+    error_str = error if error else "null"
+    print(f"[STEP] step={step} action={action_str} reward={reward:.2f} done={done_str} error={error_str}", flush=True)
 
-def emit_end(task_id: str, score: float, steps: int) -> None:
-    print(f"[END] task={task_id} score={score} steps={steps}", flush=True)
+def emit_end(success: bool, steps: int, rewards: list) -> None:
+    success_str = "true" if success else "false"
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={success_str} steps={steps} rewards={rewards_str}", flush=True)
 
 # ── LLM Client ──────────────────────────────────
 llm_client = OpenAI(
@@ -101,7 +115,6 @@ def format_observation(obs: dict) -> str:
     parts.append(f"=== EMAIL TRIAGE — TASK {task_id} ===")
     parts.append(f"Task: {obs.get('task_description', '')}")
 
-    # Feature hints
     hints = obs.get("feature_hints", {}) or {}
     hint_flags = []
     if hints.get("has_money_terms"):
@@ -132,7 +145,6 @@ def format_observation(obs: dict) -> str:
 def parse_action(text: str) -> Optional[dict]:
     """Parse an LLM response into an action dict."""
     text = text.strip()
-    # Handle markdown code blocks
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
@@ -144,10 +156,8 @@ def parse_action(text: str) -> Optional[dict]:
         text = text[start:end]
 
     try:
-        action = json.loads(text)
-        return action
+        return json.loads(text)
     except (json.JSONDecodeError, KeyError):
-        # Try cleaning trailing commas
         import re
         cleaned = re.sub(r",\s*}", "}", text)
         cleaned = re.sub(r",\s*]", "]", cleaned)
@@ -174,7 +184,6 @@ def get_fallback_action(task_id: int, obs: dict) -> dict:
     text = (obs.get("subject", "") + " " + obs.get("body", "")).lower()
     hints = obs.get("feature_hints", {}) or {}
 
-    # Simple keyword detection
     if hints.get("has_link") and hints.get("has_security_terms"):
         cat = "phishing"
     elif any(w in text for w in ["refund", "return", "money back"]):
@@ -233,25 +242,40 @@ def validate_action(action: dict, task_id: int) -> dict:
     if task_id == 3:
         draft = action.get("draft_reply", "")
         if not draft or len(draft.split()) < 100:
-            # Generate a longer draft
-            name = "Customer"
             action["draft_reply"] = (
-                f"Dear {name}, thank you for reaching out to us about this matter. "
-                f"We sincerely apologize for any inconvenience you have experienced. "
-                f"Our team has carefully reviewed your message and we understand your "
-                f"concern. We want to assure you that we take this matter very seriously "
-                f"and are committed to providing you with a satisfactory resolution. "
-                f"We have escalated your case to the appropriate department and they "
-                f"will be investigating this thoroughly. You can expect to hear back "
-                f"from us within 24 to 48 business hours with a detailed update on "
-                f"the progress of your case. In the meantime, please feel free to "
-                f"provide any additional details or documentation that might help us "
-                f"resolve this matter more efficiently. We truly appreciate your "
-                f"patience and understanding. Your satisfaction is our top priority. "
-                f"Best regards, Customer Support Team."
+                "Dear Customer, thank you for reaching out to us about this matter. "
+                "We sincerely apologize for any inconvenience you have experienced. "
+                "Our team has carefully reviewed your message and we understand your "
+                "concern. We want to assure you that we take this matter very seriously "
+                "and are committed to providing you with a satisfactory resolution. "
+                "We have escalated your case to the appropriate department and they "
+                "will be investigating this thoroughly. You can expect to hear back "
+                "from us within 24 to 48 business hours with a detailed update on "
+                "the progress of your case. In the meantime, please feel free to "
+                "provide any additional details or documentation that might help us "
+                "resolve this matter more efficiently. We truly appreciate your "
+                "patience and understanding. Your satisfaction is our top priority. "
+                "Best regards, Customer Support Team."
             )
 
     return action
+
+
+def format_action_str(action: dict) -> str:
+    """Format action dict into a compact string for the [STEP] log line."""
+    cat = action.get("category", "unknown")
+    prio = action.get("priority")
+    dept = action.get("department")
+    has_reply = bool(action.get("draft_reply"))
+
+    parts = [f"category={cat}"]
+    if prio:
+        parts.append(f"priority={prio}")
+    if dept:
+        parts.append(f"dept={dept}")
+    if has_reply:
+        parts.append("reply=yes")
+    return "triage(" + ",".join(parts) + ")"
 
 
 def run_task(task_id: str) -> float:
@@ -259,15 +283,11 @@ def run_task(task_id: str) -> float:
     final_score = 0.0
     step_count = 0
     cumulative_reward = 0.0
+    step_rewards = []
 
     emit_start(task_id)
 
-    print(f"\n{'=' * 60}", flush=True)
-    print(f"  Starting task: {task_id}", flush=True)
-    print(f"{'=' * 60}", flush=True)
-
     try:
-        # Reset environment for this task
         resp = requests.post(f"{ENV_URL}/reset", json={"task_id": task_id}, timeout=30)
         resp.raise_for_status()
         obs = resp.json()
@@ -282,11 +302,11 @@ def run_task(task_id: str) -> float:
             obs_text = format_observation(obs)
             messages.append({"role": "user", "content": obs_text})
 
-            # Keep context window manageable
             if len(messages) > 10:
                 messages = [messages[0]] + messages[-8:]
 
             action_dict = None
+            error_msg = None
             try:
                 completion = llm_client.chat.completions.create(
                     model=MODEL_NAME,
@@ -298,60 +318,52 @@ def run_task(task_id: str) -> float:
                 messages.append({"role": "assistant", "content": llm_response})
                 action_dict = parse_action(llm_response)
             except Exception as e:
-                print(f"  [Step {step_count}] LLM error: {e}", flush=True)
+                error_msg = str(e)
 
-            # Fallback if LLM fails
             if action_dict is None:
                 action_dict = get_fallback_action(current_task_id, obs)
-                print(f"  [Step {step_count}] Using fallback action", flush=True)
-            else:
-                print(
-                    f"  [Step {step_count}] Action: category={action_dict.get('category')}",
-                    flush=True,
-                )
+                if error_msg is None:
+                    error_msg = "LLM parse failed, using fallback"
 
-            # Validate and clean action
             action_dict = validate_action(action_dict, current_task_id)
+            action_str = format_action_str(action_dict)
 
-            # Execute action
             try:
                 resp = requests.post(f"{ENV_URL}/step", json=action_dict, timeout=30)
                 resp.raise_for_status()
                 result = resp.json()
             except Exception as e:
-                print(f"  [Step {step_count}] Step error: {e}", flush=True)
+                error_msg = str(e)
+                emit_step(step_count, action_str, 0.0, True, error_msg)
+                step_rewards.append(0.0)
                 break
 
-            # The environment returns observation dict directly
             obs = result
             step_reward = float(obs.get("reward", 0.0))
             done = obs.get("done", False)
             cumulative_reward += step_reward
+            step_rewards.append(step_reward)
 
-            emit_step(step_count, step_reward)
-
-            feedback = obs.get("feedback", "")
-            print(f"  Reward: {step_reward:.4f} | Feedback: {feedback}", flush=True)
+            emit_step(step_count, action_str, step_reward, done, error_msg)
 
             if done:
                 final_score = cumulative_reward / step_count if step_count > 0 else 0.0
-                # Normalize to 0-1 range
                 final_score = max(0.01, min(0.99, final_score))
-                print(f"\n  Task completed in {step_count} steps.", flush=True)
-                print(f"  Final score: {final_score:.4f}", flush=True)
                 break
 
-            # Safety: prevent infinite loops
             if step_count >= 10:
-                print("  Max steps reached, ending task.", flush=True)
                 final_score = cumulative_reward / step_count if step_count > 0 else 0.0
                 final_score = max(0.01, min(0.99, final_score))
                 break
 
     except Exception as e:
-        print(f"  Task error: {e}", flush=True)
+        if step_count == 0:
+            step_count = 1
+            step_rewards.append(0.0)
+
     finally:
-        emit_end(task_id, final_score, step_count)
+        success = final_score > 0.0 and len(step_rewards) > 0
+        emit_end(success, step_count, step_rewards)
 
     return final_score
 
@@ -366,14 +378,12 @@ def main():
     print(f"  Tasks        : {TASKS}", flush=True)
     print(flush=True)
 
-    # Verify environment is running
     try:
         resp = requests.get(f"{ENV_URL}/health", timeout=10)
         resp.raise_for_status()
         print("  Environment health check: OK", flush=True)
     except Exception as e:
         print(f"  ERROR: Cannot reach environment at {ENV_URL}: {e}", flush=True)
-        print("  Start the environment first: uvicorn server.app:app --port 7860", flush=True)
         sys.exit(1)
 
     scores = {}
@@ -384,11 +394,9 @@ def main():
         score = run_task(task_id)
         task_duration = time.time() - task_start
         scores[task_id] = score
-        print(f"  Task {task_id}: score={score:.4f}, time={task_duration:.1f}s", flush=True)
 
     total_time = time.time() - start_time
 
-    # Summary
     print(f"\n{'=' * 60}", flush=True)
     print("  RESULTS SUMMARY", flush=True)
     print("=" * 60, flush=True)
@@ -400,8 +408,6 @@ def main():
     print(f"\n  Average score: {avg_score:.4f}", flush=True)
     print(f"  Total runtime: {total_time:.1f}s", flush=True)
     print("=" * 60, flush=True)
-
-    return scores
 
 
 if __name__ == "__main__":
