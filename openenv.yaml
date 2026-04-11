@@ -20,13 +20,11 @@ tags:
 docker:
   image: email-triage-env
   port: 7860
-  env_vars:
-    - API_BASE_URL
-    - MODEL_NAME
-    - HF_TOKEN
-    - DEBUG_ACTIONS
-    - ENV_URL
-    - PORT
+
+env_vars:
+  - API_BASE_URL
+  - MODEL_NAME
+  - HF_TOKEN
 
 secrets:
   - HF_TOKEN
@@ -41,6 +39,7 @@ endpoints:
 
 action_model: models.TriageAction
 observation_model: models.TriageObservation
+reward_model: models.TriageReward
 
 tasks:
   - id: task1_email_classification

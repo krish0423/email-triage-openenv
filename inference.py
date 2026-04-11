@@ -364,8 +364,6 @@ def run_task(task_id: str) -> float:
                     max_tokens=800 if current_task_id == 3 else 256,
                 )
                 llm_response = completion.choices[0].message.content or ""
-                # Log raw LLM response for debugging
-                print("DEBUG LLM raw response:", llm_response, flush=True)
                 messages.append({"role": "assistant", "content": llm_response})
 
                 # Use the robust parser + validator
@@ -382,15 +380,10 @@ def run_task(task_id: str) -> float:
 
             action_str = format_action_str(action_dict)
 
-            # Debug: show exactly what will be sent to the environment
-            print("DEBUG -> sending action:", json.dumps(action_dict, ensure_ascii=False), flush=True)
-
             try:
                 resp = requests.post(f"{ENV_URL}/step", json=action_dict, timeout=30)
                 resp.raise_for_status()
                 result = resp.json()
-                # Debug: show raw environment response
-                print("DEBUG <- env response:", json.dumps(result, ensure_ascii=False), flush=True)
             except Exception as e:
                 error_msg = str(e)
                 emit_step(step_count, action_str, 0.0, True, error_msg)

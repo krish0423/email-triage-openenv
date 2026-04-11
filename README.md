@@ -4,6 +4,8 @@ emoji: 🚀
 colorFrom: blue
 colorTo: indigo
 sdk: docker
+sdk_version: "5.0.0"
+python_version: "3.11"
 app_port: 7860
 short_description: Confidence-Aware Autonomous Email Routing using Hybrid RL
 tags:
