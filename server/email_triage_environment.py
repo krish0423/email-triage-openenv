@@ -1,6 +1,6 @@
 # env.py — Email Triage Environment (final, pydantic-safe)
 # - Preserves internal negative signal via raw_reward clipped to [-1.0, 1.0]
-# - Returns external reward clamped to [0.0, 1.0] for API compliance
+# - Returns external reward clamped to OPEN interval (0, 1) — never 0.0 or 1.0
 # - Instance-local RNG for reproducibility
 # - Repetition penalty for draft replies
 # - Logs both raw_reward and external_reward in JSONL
@@ -107,6 +107,15 @@ def _validate_action_fields(action: TriageAction) -> Tuple[bool, str]:
 def _sentence_split(text: str) -> list:
     return [s.strip() for s in re.split(r'[.!?]\s*', text) if s.strip()]
 
+def _safe_score(raw: float) -> float:
+    """
+    Clamp reward to the STRICTLY open interval (0, 1).
+    Values of exactly 0.0 or 1.0 are rejected by the Phase 2 validator.
+    eps=1e-4 survives round(..., 4): 0.0001 and 0.9999 are the boundary values.
+    """
+    eps = 1e-4
+    return round(max(eps, min(1.0 - eps, float(raw))), 4)
+
 # -------------------------
 # Environment
 # -------------------------
@@ -189,7 +198,8 @@ class EmailTriageEnvironment:
         valid, msg = _validate_action_fields(action)
         if not valid:
             raw_reward = -0.5
-            external_reward = round(max(0.0, min(1.0, raw_reward)), 4)
+            # FIX: use _safe_score so result is never exactly 0.0
+            external_reward = _safe_score(raw_reward)
             feedback = f"Invalid action: {msg}"
             self._state.steps += 1
             self._state.total_reward += external_reward
@@ -319,9 +329,9 @@ class EmailTriageEnvironment:
 
         reward += self._rng.uniform(-0.02, 0.02)
 
-        raw_reward = max(-1.0, min(1.0, reward))
-        raw_reward = round(raw_reward, 4)
-        external_reward = round(max(0.0, min(1.0, raw_reward)), 4)
+        # FIX: use _safe_score so external_reward is never exactly 0.0 or 1.0
+        raw_reward = round(max(-1.0, min(1.0, reward)), 4)
+        external_reward = _safe_score(raw_reward)
 
         self._state.total_reward += external_reward
         self._state.steps += 1
