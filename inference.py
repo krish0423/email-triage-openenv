@@ -35,24 +35,30 @@ TASKS = [
 
 ENV_NAME = "email-triage-env"
 
-# ── Structured Logging ──────────────────────────
-# Official format:
-#   [START] task=<task_name> env=<benchmark> model=<model_name>
-#   [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
-#   [END]   success=<true|false> steps=<n> rewards=<r1,r2,...,rn>
 
+# ── Reward clamping ─────────────────────────────
+# Validator rejects exactly 0.0 and 1.0.
+# We must clamp BEFORE formatting to 2dp so 0.9999 doesn't round to 1.00
+def clamp_reward(r: float) -> float:
+    return max(0.01, min(0.99, float(r)))
+
+
+# ── Structured Logging ──────────────────────────
 def emit_start(task_id: str) -> None:
     print(f"[START] task={task_id} env={ENV_NAME} model={MODEL_NAME}", flush=True)
 
 def emit_step(step: int, action_str: str, reward: float, done: bool, error: Optional[str] = None) -> None:
     done_str = "true" if done else "false"
     error_str = error if error else "null"
-    print(f"[STEP] step={step} action={action_str} reward={reward:.2f} done={done_str} error={error_str}", flush=True)
+    r = clamp_reward(reward)
+    print(f"[STEP] step={step} action={action_str} reward={r:.2f} done={done_str} error={error_str}", flush=True)
 
 def emit_end(success: bool, steps: int, rewards: list) -> None:
     success_str = "true" if success else "false"
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    clamped = [clamp_reward(r) for r in rewards]
+    rewards_str = ",".join(f"{r:.2f}" for r in clamped)
     print(f"[END] success={success_str} steps={steps} rewards={rewards_str}", flush=True)
+
 
 # ── LLM Client ──────────────────────────────────
 llm_client = OpenAI(
@@ -107,8 +113,8 @@ Example for Task 2:
 Example for Task 3:
 {"category": "billing", "priority": "P1", "department": "billing_team", "draft_reply": "Dear customer, ..."}"""
 
+
 def format_observation(obs: dict) -> str:
-    """Format an observation into a readable string for the LLM."""
     parts = []
     task_id = obs.get("task_id", 1)
     parts.append(f"=== EMAIL TRIAGE — TASK {task_id} ===")
@@ -142,7 +148,6 @@ def format_observation(obs: dict) -> str:
 
 
 def parse_action(text: str) -> Optional[dict]:
-    """Parse an LLM response into an action dict."""
     text = text.strip()
     if "```json" in text:
         text = text.split("```json")[1].split("```")[0].strip()
@@ -179,7 +184,6 @@ PRIO_MAP = {
 
 
 def get_fallback_action(task_id: int, obs: dict) -> dict:
-    """Heuristic fallback if LLM parsing fails."""
     text = (obs.get("subject", "") + " " + obs.get("body", "")).lower()
     hints = obs.get("feature_hints", {}) or {}
 
@@ -222,7 +226,6 @@ def get_fallback_action(task_id: int, obs: dict) -> dict:
 
 
 def validate_action(action: dict, task_id: int) -> dict:
-    """Ensure action has valid fields for the task."""
     cat = action.get("category", "general")
     if cat not in VALID_CATEGORIES:
         cat = "general"
@@ -260,57 +263,7 @@ def validate_action(action: dict, task_id: int) -> dict:
     return action
 
 
-def parse_and_validate_action(llm_text: str, task_id: int, obs: dict) -> dict:
-    """
-    Robust wrapper: parse LLM text, sanitize fields, and guarantee a valid action dict.
-    Uses parse_action(), get_fallback_action(), and validate_action() already defined.
-    """
-    # 1) Try to parse raw LLM output
-    action = parse_action(llm_text) if llm_text else None
-
-    # 2) If parse failed, use fallback heuristic
-    if not action:
-        action = get_fallback_action(task_id, obs)
-
-    # 3) Normalize keys and values
-    if "category" in action and isinstance(action["category"], str):
-        action["category"] = action["category"].strip().lower()
-    if "priority" in action and isinstance(action["priority"], str):
-        action["priority"] = action["priority"].strip().upper()
-    if "department" in action and isinstance(action["department"], str):
-        action["department"] = action["department"].strip().lower()
-
-    # 4) Map common department synonyms to canonical names
-    dept_synonyms = {
-        "support": "customer_success", "support_team": "customer_success",
-        "tech": "technical_team", "tech_team": "technical_team",
-        "billing": "billing_team", "accounts": "billing_team",
-        "security": "security", "fraud": "security", "returns": "returns"
-    }
-    if "department" in action and action["department"] in dept_synonyms:
-        action["department"] = dept_synonyms[action["department"]]
-
-    # 5) If category missing or invalid, infer from text
-    if not action.get("category") or action["category"] not in VALID_CATEGORIES:
-        inferred = get_fallback_action(task_id, obs).get("category")
-        action["category"] = inferred
-
-    # 6) Ensure priority/department/draft_reply fields are present/valid for the task
-    action = validate_action(action, task_id)
-
-    # 7) Final safety: ensure no empty strings for optional fields
-    for k in ["priority", "department"]:
-        if action.get(k) == "" or action.get(k) is None:
-            if task_id >= 2:
-                action[k] = PRIO_MAP.get(action["category"], "P3") if k == "priority" else DEPT_MAP.get(action["category"], "customer_success")
-            else:
-                action.pop(k, None)
-
-    return action
-
-
 def format_action_str(action: dict) -> str:
-    """Format action dict into a compact string for the [STEP] log line."""
     cat = action.get("category", "unknown")
     prio = action.get("priority")
     dept = action.get("department")
@@ -327,7 +280,6 @@ def format_action_str(action: dict) -> str:
 
 
 def run_task(task_id: str) -> float:
-    """Run a single task and return the final score."""
     final_score = 0.0
     step_count = 0
     cumulative_reward = 0.0
@@ -355,7 +307,6 @@ def run_task(task_id: str) -> float:
 
             action_dict = None
             error_msg = None
-            llm_response = ""
             try:
                 completion = llm_client.chat.completions.create(
                     model=MODEL_NAME,
@@ -365,19 +316,16 @@ def run_task(task_id: str) -> float:
                 )
                 llm_response = completion.choices[0].message.content or ""
                 messages.append({"role": "assistant", "content": llm_response})
-
-                # Use the robust parser + validator
-                action_dict = parse_and_validate_action(llm_response, current_task_id, obs)
-
+                action_dict = parse_action(llm_response)
             except Exception as e:
                 error_msg = str(e)
 
             if action_dict is None:
-                # As a final fallback (shouldn't happen because parse_and_validate_action guarantees a dict)
                 action_dict = get_fallback_action(current_task_id, obs)
                 if error_msg is None:
                     error_msg = "LLM parse failed, using fallback"
 
+            action_dict = validate_action(action_dict, current_task_id)
             action_str = format_action_str(action_dict)
 
             try:
@@ -391,8 +339,8 @@ def run_task(task_id: str) -> float:
                 break
 
             obs = result
-            step_reward = float(obs.get("reward", 0.01))
-            step_reward = max(0.01, min(0.99, step_reward))
+            # Clamp the raw reward from server immediately
+            step_reward = clamp_reward(obs.get("reward", 0.0))
             done = obs.get("done", False)
             cumulative_reward += step_reward
             step_rewards.append(step_reward)
@@ -400,13 +348,13 @@ def run_task(task_id: str) -> float:
             emit_step(step_count, action_str, step_reward, done, error_msg)
 
             if done:
-                final_score = cumulative_reward / step_count if step_count > 0 else 0.0
-                final_score = max(0.01, min(0.99, final_score))
+                final_score = cumulative_reward / step_count if step_count > 0 else 0.01
+                final_score = clamp_reward(final_score)
                 break
 
             if step_count >= 10:
-                final_score = cumulative_reward / step_count if step_count > 0 else 0.0
-                final_score = max(0.01, min(0.99, final_score))
+                final_score = cumulative_reward / step_count if step_count > 0 else 0.01
+                final_score = clamp_reward(final_score)
                 break
 
     except Exception as e:
@@ -415,7 +363,7 @@ def run_task(task_id: str) -> float:
             step_rewards.append(0.01)
 
     finally:
-        success = final_score > 0.0 and len(step_rewards) > 0
+        success = final_score > 0.01 and len(step_rewards) > 0
         emit_end(success, step_count, step_rewards)
 
     return final_score
