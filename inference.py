@@ -13,7 +13,9 @@ except Exception:
 ENV_URL       = os.environ.get("ENV_URL", "http://127.0.0.1:7860")
 API_BASE_URL  = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME    = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-HF_TOKEN      = os.environ.get("HF_TOKEN", "")
+HF_TOKEN = os.environ.get("HF_TOKEN")
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
 NUM_EPISODES  = int(os.environ.get("NUM_EPISODES", "300"))
 SEED          = int(os.environ.get("SEED", "42"))
 DEMO_MODE     = bool(os.environ.get("DEMO_MODE", ""))
@@ -114,18 +116,18 @@ def heuristic_classifier(obs: dict) -> Tuple[str, float]:
     
     score = {c: 0.0 for c in VALID_CATEGORIES}
     
-    if any(w in text for w in ["refund", "return", "money back"]):
-        score["refund"] += 1.5; score["billing"] += 0.5
+    if any(w in text for w in ["refund", "return", "money back", "give back", "reimburs"]):
+        score["refund"] += 1.8; score["billing"] += 0.3
     if any(w in text for w in ["charge", "invoice", "payment", "billing"]):
         score["billing"] += 1.5
-    if any(w in text for w in ["error", "bug", "crash", "not working"]):
-        score["technical"] += 1.6
+    if any(w in text for w in ["error", "bug", "crash", "not working", "broken", "slow", "down", "issue", "fail", "doesn't work", "not loading", "can't access", "unable to", "not responding", "stopped working", "keeps crashing", "won't open", "problem with"]):
+     score["technical"] += 2.0 
     if any(w in text for w in ["password", "login", "account", "verify", "username", "sign in"]):
         score["account"] += 1.5; score["technical"] += 0.4
     if any(w in text for w in ["phish", "phishing", "suspicious", "click the link"]):
         score["phishing"] += 2.0
-    if any(w in text for w in ["unhappy", "disappointed", "complaint", "angry", "worst"]):
-        score["complaint"] += 1.5
+    if any(w in text for w in ["unhappy", "disappointed", "complaint", "angry", "worst", "terrible", "horrible", "unacceptable", "frustrated", "poor service", "bad experience"]):
+        score["complaint"] += 1.6  # increase from 1.5
 
     # Boost using feature_hints
     if hints.get("has_money_terms"):
@@ -136,6 +138,11 @@ def heuristic_classifier(obs: dict) -> Tuple[str, float]:
         score["phishing"] += 0.7
     if hints.get("has_urgency"):
         score["phishing"] += 0.5; score["complaint"] += 0.3
+    # Combined signals = strong phishing indicator
+    if hints.get("has_link") and hints.get("has_security_terms"):
+        score["phishing"] += 2.5
+    if hints.get("has_link") and hints.get("has_money_terms"):
+        score["phishing"] += 1.5
 
     if all(v == 0.0 for v in score.values()):
         return "general", 0.4
@@ -237,10 +244,10 @@ def ensure_long_draft(base: str, min_words: int = 100) -> str:
     ]
     combined = base
     for filler in fillers:
-        if len(combined.split()) >= min_words:
+        if len(combined.split()) >= min_words + 10:
             break
         combined += " " + filler
-    return " ".join(combined.split()[:min_words])
+    return combined
 
 def build_contextual_draft(obs: dict, category: str) -> str:
     email_id = obs.get("email_id", str(time.time()))
@@ -250,7 +257,7 @@ def build_contextual_draft(obs: dict, category: str) -> str:
     base = choose_template(email_id, category).format(name=name, issue=issue)
     if len(issue_phrases) > 1:
         base += f" We also noted: {issue_phrases[1]}."
-    return ensure_long_draft(base, min_words=100)
+    return ensure_long_draft(base, min_words=110)
 
 def env_reset() -> dict:
     try: return requests.post(f"{ENV_URL}/reset", timeout=20).json()
@@ -267,122 +274,114 @@ def env_state() -> dict:
 
 # ── Structured output (required by Phase 2 validator) ───────────────────────
 
-def print_start(ep: int, episode_id: str):
-    print(f"[START] task=episode_{ep} episode_id={episode_id}", flush=True)
+def print_start(ep: int, task_name: str):
+    print(f"[START] task={task_name} env=email-triage model={MODEL_NAME}", flush=True)
 
-def print_step(ep: int, step_num: int, reward: float):
-    print(f"[STEP] step={step_num} reward={round(reward, 4)}", flush=True)
+def print_step(step_num: int, action: dict, reward: float, done: bool, error: str = None):
+    action_str = f"triage(category={action.get('category')},priority={action.get('priority')},dept={action.get('department')})"
+    error_str = error if error else "null"
+    done_str = "true" if done else "false"
+    print(f"[STEP] step={step_num} action={action_str} reward={reward:.2f} done={done_str} error={error_str}", flush=True)
 
-def print_end(ep: int, total_reward: float, step_num: int):
-    score = round(total_reward / max(step_num, 1), 4)
-    score = max(0.0001, min(0.9999, score))  # strictly between 0 and 1
-    print(f"[END] task=episode_{ep} score={score} steps={step_num}", flush=True)
+def print_end(success: bool, step_num: int, rewards: list):
+    success_str = "true" if success else "false"
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={success_str} steps={step_num} rewards={rewards_str}", flush=True)
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
 def run_inference():
     load_q_table(QTABLE_PATH)
     _rng.seed(SEED)
-    all_rewards = []
     for ep in range(1, NUM_EPISODES+1):
         obs = env_reset()
-        episode_id = env_state().get("episode_id", f"ep_{ep}")
-
-        print_start(ep, episode_id)  # [START]
-
+        task_name = f"episode_{ep}"
+        
+        print_start(ep, task_name)  # [START]
+        
         total_reward = 0.0
         done = obs.get("done", False)
         step_num = 0
+        step_rewards = []
         prev_state = extract_features(obs)
+        
         while not done:
             step_num += 1
             task_id = obs.get("task_id", 1)
-            if DEMO_MODE:
-                gt = obs.get("ground_truth", {}) or {}
-                category = gt.get("category","general")
-                priority = gt.get("priority") if task_id>=2 else None
-                department = gt.get("department") if task_id>=2 else None
-                draft = build_contextual_draft(obs, category) if task_id==3 else None
-                action = {"category":category,"priority":priority,"department":department,"draft_reply":draft}
-                llm_cat = None; llm_conf = None; heuristic_cat = category; heuristic_conf = 1.0; escalate=False
-            else:
-                heuristic_cat, heuristic_conf = heuristic_classifier(obs)
-                llm_cat, llm_draft, llm_conf = llm_classify(obs.get("subject",""), obs.get("body",""), task_id)
-                llm_prior = {c:(1.0 if c==llm_cat else 0.0) for c in VALID_CATEGORIES}
-                heuristic_prior = {c:0.0 for c in VALID_CATEGORIES}; heuristic_prior[heuristic_cat]=heuristic_conf
-                hsum = sum(heuristic_prior.values()) or 1.0
-                heuristic_prior = {c:heuristic_prior[c]/hsum for c in VALID_CATEGORIES}
-                llm_w = max(0.05, LLM_WEIGHT * (LLM_DECAY ** (ep-1))); heur_w = 1.0 - llm_w
-                combined_prior = {c: llm_w*llm_prior[c] + heur_w*heuristic_prior[c] for c in VALID_CATEGORIES}
-                state = extract_features(obs); bucket = get_q_bucket(state)
-                max_q = max(bucket.values()) if bucket else 0.0
-                q_exp = {c: math.exp(bucket[c]-max_q) for c in VALID_CATEGORIES}
-                q_sum = sum(q_exp.values()) or 1.0
-                q_prior = {c: q_exp[c]/q_sum for c in VALID_CATEGORIES}
-                q_vals = get_q_bucket(state)
-                q_confidence = max(q_vals.values()) - min(q_vals.values())
-                q_weight = min(0.3, 0.1 + q_confidence)
-                h_weight = 1.0 - q_weight
-                blended = {}
-                for c in VALID_CATEGORIES:
-                    blended[c] = h_weight*combined_prior[c] + q_weight*q_prior[c] + exploration_bonus(state,c)
-                category = max(blended.items(), key=lambda kv:(kv[1], -VALID_CATEGORIES.index(kv[0])))[0]
-                if _rng.random() < get_epsilon(ep):
-                    category = _rng.choice(VALID_CATEGORIES)
-                blended_confidence = max(combined_prior.get(category,0.0), q_prior.get(category,0.0))
-                if heuristic_cat != llm_cat and heuristic_conf < 0.6 and llm_conf < 0.6:
-                    blended_confidence *= 0.6
-                escalate = blended_confidence < 0.35
-                if task_id == 3:
-                    if llm_draft and llm_conf >= 0.6:
-                        draft_candidate = ensure_long_draft(llm_draft, min_words=100)
-                        sentences = [s.strip() for s in re.split(r'[.!?]\s*', draft_candidate) if s.strip()]
-                        if len(sentences)>0 and len(set(sentences))/len(sentences) < 0.5:
-                            draft = build_contextual_draft(obs, category)
-                        else:
-                            draft = draft_candidate
-                    else:
+            
+            # ... your existing classification logic ...
+            heuristic_cat, heuristic_conf = heuristic_classifier(obs)
+            llm_cat, llm_draft, llm_conf = llm_classify(obs.get("subject",""), obs.get("body",""), task_id)
+            llm_prior = {c:(1.0 if c==llm_cat else 0.0) for c in VALID_CATEGORIES}
+            heuristic_prior = {c:0.0 for c in VALID_CATEGORIES}; heuristic_prior[heuristic_cat]=heuristic_conf
+            hsum = sum(heuristic_prior.values()) or 1.0
+            heuristic_prior = {c:heuristic_prior[c]/hsum for c in VALID_CATEGORIES}
+            llm_w = max(0.05, LLM_WEIGHT * (LLM_DECAY ** (ep-1))); heur_w = 1.0 - llm_w
+            combined_prior = {c: llm_w*llm_prior[c] + heur_w*heuristic_prior[c] for c in VALID_CATEGORIES}
+            state = extract_features(obs); bucket = get_q_bucket(state)
+            max_q = max(bucket.values()) if bucket else 0.0
+            q_exp = {c: math.exp(bucket[c]-max_q) for c in VALID_CATEGORIES}
+            q_sum = sum(q_exp.values()) or 1.0
+            q_prior = {c: q_exp[c]/q_sum for c in VALID_CATEGORIES}
+            q_vals = get_q_bucket(state)
+            q_confidence = max(q_vals.values()) - min(q_vals.values())
+            q_weight = min(0.3, 0.1 + q_confidence)
+            h_weight = 1.0 - q_weight
+            blended = {}
+            for c in VALID_CATEGORIES:
+                blended[c] = h_weight*combined_prior[c] + q_weight*q_prior[c] + exploration_bonus(state,c)
+            category = max(blended.items(), key=lambda kv:(kv[1], -VALID_CATEGORIES.index(kv[0])))[0]
+            if _rng.random() < get_epsilon(ep):
+                category = _rng.choice(VALID_CATEGORIES)
+            blended_confidence = max(combined_prior.get(category,0.0), q_prior.get(category,0.0))
+            if heuristic_cat != llm_cat and heuristic_conf < 0.6 and llm_conf < 0.6:
+                blended_confidence *= 0.6
+            escalate = blended_confidence < 0.35
+            if task_id == 3:
+                if llm_draft and llm_conf >= 0.6:
+                    draft_candidate = ensure_long_draft(llm_draft, min_words=110)
+                    sentences = [s.strip() for s in re.split(r'[.!?]\s*', draft_candidate) if s.strip()]
+                    if len(sentences)>0 and len(set(sentences))/len(sentences) < 0.5:
                         draft = build_contextual_draft(obs, category)
+                    else:
+                        draft = draft_candidate
                 else:
-                    draft = None
-                priority = PRIO_MAP.get(category) if task_id>=2 else None
-                department = DEPT_MAP.get(category) if task_id>=2 else None
-                if escalate:
-                    department = "customer_success"; priority = "P1"
-                action = {"category":category,"priority":priority,"department":department,"draft_reply":draft}
+                    draft = build_contextual_draft(obs, category)
+            else:
+                draft = None
+            priority = PRIO_MAP.get(category) if task_id>=2 else None
+            department = DEPT_MAP.get(category) if task_id>=2 else None
+            if escalate:
+                department = "customer_success"; priority = "P1"
+            action = {"category":category,"priority":priority,"department":department,"draft_reply":draft}
+
             s = extract_features(obs)
             state_visits[s] = state_visits.get(s,0) + 1
             state_category_counts.setdefault(s,{})
             state_category_counts[s][action.get("category")] = state_category_counts[s].get(action.get("category"),0) + 1
+            
             next_obs = env_step(action)
-            raw_reward = None
-            if "raw_reward" in next_obs:
-                try: raw_reward = float(next_obs.get("raw_reward"))
-                except Exception: raw_reward = None
             external_reward = float(next_obs.get("reward", 0.0))
-            if raw_reward is not None:
-                learn_reward = raw_reward; learn_source = "raw_reward"
-            else:
-                mapped = (external_reward - 0.5) * 2.0 * FALLBACK_RANGE
-                learn_reward = mapped * FALLBACK_SCALE
-                learn_source = "fallback_mapped"
-            learn_reward = max(-LEARN_REWARD_CLAMP, min(LEARN_REWARD_CLAMP, float(learn_reward)))
-            next_state = extract_features(next_obs)
-            prev_q = get_q_bucket(prev_state).get(action.get("category","general"), 0.0)
-            update_q(prev_state, action.get("category","general"), learn_reward, next_state)
-            new_q = get_q_bucket(prev_state).get(action.get("category","general"), 0.0)
             done = next_obs.get("done", False)
+            error = next_obs.get("feedback") if external_reward == 0.0 else None
+            
+            step_rewards.append(external_reward)
             total_reward += external_reward
 
-            print_step(ep, step_num, external_reward)  # [STEP]
+            print_step(step_num, action, external_reward, done, error)  # [STEP]
 
+            raw_reward = float(next_obs.get("raw_reward", external_reward))
+            learn_reward = max(-LEARN_REWARD_CLAMP, min(LEARN_REWARD_CLAMP, raw_reward))
+            next_state = extract_features(next_obs)
+            update_q(s, action.get("category","general"), learn_reward, next_state)
             prev_state = next_state
             obs = next_obs
 
-        all_rewards.append(total_reward)
-        if ep % Q_PERSIST_EVERY == 0: save_q_table(QTABLE_PATH)
+        success = total_reward > 0
+        print_end(success, step_num, step_rewards)  # [END]
 
-        print_end(ep, total_reward, step_num)  # [END]
+        if ep % Q_PERSIST_EVERY == 0:
+            save_q_table(QTABLE_PATH)
 
     save_q_table(QTABLE_PATH)
 
