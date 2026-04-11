@@ -285,7 +285,9 @@ def print_step(step_num: int, action: dict, reward: float, done: bool, error: st
 
 def print_end(success: bool, step_num: int, rewards: list):
     success_str = "true" if success else "false"
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    # Clamp strictly - 0.01 shows as 0.01 in 2dp, not 0.00
+    clamped = [max(0.01, min(0.99, r)) for r in rewards]
+    rewards_str = ",".join(f"{r:.2f}" for r in clamped)
     print(f"[END] success={success_str} steps={step_num} rewards={rewards_str}", flush=True)
 
 # ── Main loop ────────────────────────────────────────────────────────────────
