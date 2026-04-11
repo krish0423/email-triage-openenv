@@ -107,7 +107,6 @@ Example for Task 2:
 Example for Task 3:
 {"category": "billing", "priority": "P1", "department": "billing_team", "draft_reply": "Dear customer, ..."}"""
 
-
 def format_observation(obs: dict) -> str:
     """Format an observation into a readable string for the LLM."""
     parts = []
@@ -261,6 +260,55 @@ def validate_action(action: dict, task_id: int) -> dict:
     return action
 
 
+def parse_and_validate_action(llm_text: str, task_id: int, obs: dict) -> dict:
+    """
+    Robust wrapper: parse LLM text, sanitize fields, and guarantee a valid action dict.
+    Uses parse_action(), get_fallback_action(), and validate_action() already defined.
+    """
+    # 1) Try to parse raw LLM output
+    action = parse_action(llm_text) if llm_text else None
+
+    # 2) If parse failed, use fallback heuristic
+    if not action:
+        action = get_fallback_action(task_id, obs)
+
+    # 3) Normalize keys and values
+    if "category" in action and isinstance(action["category"], str):
+        action["category"] = action["category"].strip().lower()
+    if "priority" in action and isinstance(action["priority"], str):
+        action["priority"] = action["priority"].strip().upper()
+    if "department" in action and isinstance(action["department"], str):
+        action["department"] = action["department"].strip().lower()
+
+    # 4) Map common department synonyms to canonical names
+    dept_synonyms = {
+        "support": "customer_success", "support_team": "customer_success",
+        "tech": "technical_team", "tech_team": "technical_team",
+        "billing": "billing_team", "accounts": "billing_team",
+        "security": "security", "fraud": "security", "returns": "returns"
+    }
+    if "department" in action and action["department"] in dept_synonyms:
+        action["department"] = dept_synonyms[action["department"]]
+
+    # 5) If category missing or invalid, infer from text
+    if not action.get("category") or action["category"] not in VALID_CATEGORIES:
+        inferred = get_fallback_action(task_id, obs).get("category")
+        action["category"] = inferred
+
+    # 6) Ensure priority/department/draft_reply fields are present/valid for the task
+    action = validate_action(action, task_id)
+
+    # 7) Final safety: ensure no empty strings for optional fields
+    for k in ["priority", "department"]:
+        if action.get(k) == "" or action.get(k) is None:
+            if task_id >= 2:
+                action[k] = PRIO_MAP.get(action["category"], "P3") if k == "priority" else DEPT_MAP.get(action["category"], "customer_success")
+            else:
+                action.pop(k, None)
+
+    return action
+
+
 def format_action_str(action: dict) -> str:
     """Format action dict into a compact string for the [STEP] log line."""
     cat = action.get("category", "unknown")
@@ -307,6 +355,7 @@ def run_task(task_id: str) -> float:
 
             action_dict = None
             error_msg = None
+            llm_response = ""
             try:
                 completion = llm_client.chat.completions.create(
                     model=MODEL_NAME,
@@ -315,23 +364,33 @@ def run_task(task_id: str) -> float:
                     max_tokens=800 if current_task_id == 3 else 256,
                 )
                 llm_response = completion.choices[0].message.content or ""
+                # Log raw LLM response for debugging
+                print("DEBUG LLM raw response:", llm_response, flush=True)
                 messages.append({"role": "assistant", "content": llm_response})
-                action_dict = parse_action(llm_response)
+
+                # Use the robust parser + validator
+                action_dict = parse_and_validate_action(llm_response, current_task_id, obs)
+
             except Exception as e:
                 error_msg = str(e)
 
             if action_dict is None:
+                # As a final fallback (shouldn't happen because parse_and_validate_action guarantees a dict)
                 action_dict = get_fallback_action(current_task_id, obs)
                 if error_msg is None:
                     error_msg = "LLM parse failed, using fallback"
 
-            action_dict = validate_action(action_dict, current_task_id)
             action_str = format_action_str(action_dict)
+
+            # Debug: show exactly what will be sent to the environment
+            print("DEBUG -> sending action:", json.dumps(action_dict, ensure_ascii=False), flush=True)
 
             try:
                 resp = requests.post(f"{ENV_URL}/step", json=action_dict, timeout=30)
                 resp.raise_for_status()
                 result = resp.json()
+                # Debug: show raw environment response
+                print("DEBUG <- env response:", json.dumps(result, ensure_ascii=False), flush=True)
             except Exception as e:
                 error_msg = str(e)
                 emit_step(step_count, action_str, 0.0, True, error_msg)

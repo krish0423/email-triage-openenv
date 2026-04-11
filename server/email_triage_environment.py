@@ -301,7 +301,7 @@ class EmailTriageEnvironment:
                 else:
                     try:
                         score, reason = llm_judge_score(email["subject"], email["body"], draft)
-                        norm = _normalize_llm_score(score, scale=5.0)
+                        norm = _normalize_llm_score(score, scale=1.0)
                         reward += norm * 0.4
                         feedback_items.append(f"Reply quality (LLM): {norm:.3f} ({reason})")
                         reason_tags.append("llm_judge")

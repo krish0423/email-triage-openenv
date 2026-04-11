@@ -34,8 +34,9 @@ class TriageAction(BaseModel):
             if self.department is None:
                 errors.append("department is required for task >= 2")
         if task_id == 3:
-            if not self.draft_reply or len(self.draft_reply.split()) < 50:
-                errors.append("draft_reply must be >= 50 words for task 3")
+            # env.py enforces a 100-word minimum for draft_reply
+            if not self.draft_reply or len(self.draft_reply.split()) < 100:
+                errors.append("draft_reply must be >= 100 words for task 3")
         return errors
 
 
@@ -47,7 +48,8 @@ class TriageObservation(BaseModel):
     subject:          str
     body:             str
     sender:           str
-    task_id:          str   # string slug e.g. "task1_email_classification"
+    # numeric task id to match env.py (1, 2, 3)
+    task_id:          int   # numeric task id e.g. 1, 2, 3
     task_description: str
     max_steps:        int   = 25     # per-task step limit; inference.py reads this
     reward:           float = 0.01   # default is clamped minimum, never 0.0
@@ -86,7 +88,8 @@ class TriageReward(BaseModel):
 class TriageState(BaseModel):
     """Internal episode state returned by GET /state."""
     episode_id:      str
-    current_task_id: str   = "task1_email_classification"  # string slug
+    # numeric current_task_id to match env.py internal representation
+    current_task_id: int   = 1
     total_reward:    float = 0.0
     steps:           int   = 0
     completed:       bool  = False

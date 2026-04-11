@@ -9,7 +9,7 @@ from typing import Tuple
 try:
     from openai import OpenAI
     _OPENAI_AVAILABLE = True
-except ImportError:
+except Exception:
     _OPENAI_AVAILABLE = False
 
 
@@ -23,7 +23,7 @@ Score the draft reply from 0.0 to 1.0 based on these criteria:
 4. Professionalism (0.0-0.25): Is it professional, concise, and free of errors?
 
 Return ONLY a JSON object with this exact format (no markdown, no preamble):
-{"score": 0.75, "reasoning": "brief one-sentence explanation"}
+{\"score\": 0.75, \"reasoning\": \"brief one-sentence explanation\"}
 """
 
 JUDGE_USER_TEMPLATE = """Customer Email:
@@ -46,39 +46,64 @@ def llm_judge_score(
     Returns (score 0.0-1.0, reasoning string).
     Falls back to heuristic if LLM unavailable.
     """
+    # Always return a tuple (score, reason)
     if not _OPENAI_AVAILABLE:
         return _heuristic_score(draft_reply)
 
-    api_key  = os.environ.get("HF_TOKEN", "")
+    api_key = os.environ.get("HF_TOKEN", "")
     base_url = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-    model    = os.environ.get("MODEL_NAME", "gpt-4o-mini")
+    model = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 
     if not api_key:
         return _heuristic_score(draft_reply)
 
     try:
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        client = OpenAI(base_url=base_url, api_key=api_key)
         resp = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-                {"role": "user",   "content": JUDGE_USER_TEMPLATE.format(
+                {"role": "user", "content": JUDGE_USER_TEMPLATE.format(
                     subject=subject, body=body, draft_reply=draft_reply
                 )},
             ],
             temperature=0.0,
             max_tokens=150,
         )
-        raw = resp.choices[0].message.content.strip()
-        # Strip markdown fences
+        raw = getattr(resp.choices[0].message, "content", "") or ""
+        raw = raw.strip()
+
+        # Robustly strip fenced code blocks and leading text
         if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        data = json.loads(raw.strip())
+            # remove first fence and trailing fence if present
+            parts = raw.split("```")
+            # find the first part that looks like JSON
+            candidate = ""
+            for p in parts:
+                p = p.strip()
+                if p.startswith("{") and p.endswith("}"):
+                    candidate = p
+                    break
+                # handle ```json\n{...}
+                if p.lower().startswith("json") and "{" in p:
+                    candidate = p[p.find("{"):]
+                    break
+            if candidate:
+                raw = candidate
+            else:
+                # fallback to the middle segment if nothing obvious
+                raw = parts[1] if len(parts) > 1 else raw
+
+        # Try to extract JSON object from text
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        json_text = raw[start:end] if start != -1 and end != -1 and end > start else raw
+
+        data = json.loads(json_text.strip())
         score = float(data.get("score", 0.0))
         score = max(0.0, min(1.0, score))   # clamp
-        return score, data.get("reasoning", "LLM judged")
+        reason = data.get("reasoning", "LLM judged")
+        return score, reason
 
     except Exception as e:
         # Graceful fallback – never crash the environment
@@ -98,7 +123,7 @@ def _heuristic_score(draft: str) -> Tuple[float, str]:
     score = 0.0
     reasons = []
 
-    # Length tiers
+    # Length tiers (character-based but roughly correlates to words)
     length = len(draft)
     if length >= 50:
         score += 0.1
@@ -114,7 +139,7 @@ def _heuristic_score(draft: str) -> Tuple[float, str]:
     if hits:
         score += 0.25
         reasons.append(f"empathy={hits[0]}")
-    
+
     # Action/resolution signals
     action_words = ["will", "team", "refund", "contact", "resolve", "fix", "escalate",
                     "investigate", "within", "hours", "days", "shortly", "immediately"]
@@ -125,7 +150,7 @@ def _heuristic_score(draft: str) -> Tuple[float, str]:
 
     # Professionalism: greeting + closing
     has_greeting = any(g in draft.lower() for g in ["dear", "hello", "hi ", "thank you for"])
-    has_closing  = any(c in draft.lower() for c in ["regards", "sincerely", "best", "team"])
+    has_closing = any(c in draft.lower() for c in ["regards", "sincerely", "best", "team"])
     if has_greeting:
         score += 0.15
     if has_closing:
