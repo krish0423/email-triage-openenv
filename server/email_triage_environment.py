@@ -1,6 +1,6 @@
 # env.py — Email Triage Environment (final, pydantic-safe)
 # - Preserves internal negative signal via raw_reward clipped to [-1.0, 1.0]
-# - Returns external reward clamped to OPEN interval (0, 1) — never 0.0 or 1.0
+# - Returns external reward clamped to [0.0, 1.0] for API compliance
 # - Instance-local RNG for reproducibility
 # - Repetition penalty for draft replies
 # - Logs both raw_reward and external_reward in JSONL
@@ -41,19 +41,12 @@ VALID_DEPARTMENTS = {"billing_team", "technical_team", "customer_success", "secu
 DATASET = load_dataset()
 ENV_HELPER = DatasetEnvHelper(DATASET)
 
-DEPT_REMAP = {
-    "tech_support": "technical_team",
-    "billing": "billing_team",
-    "security_team": "security",
-}
-
 def _normalize_ground_truth(dataset):
     for i, e in enumerate(dataset):
         gt = e.get("ground_truth", {}) or {}
         gt.setdefault("category", e.get("true_category"))
         gt.setdefault("priority", e.get("true_priority"))
-        dept = DEPT_REMAP.get(e.get("true_department"), e.get("true_department"))
-        gt.setdefault("department", dept)
+        gt.setdefault("department", e.get("true_department"))
         gt.setdefault("disguised", bool(e.get("disguised", False) or e.get("is_adversarial", False)))
         e["ground_truth"] = gt
         if "email_id" not in e:
@@ -106,15 +99,6 @@ def _validate_action_fields(action: TriageAction) -> Tuple[bool, str]:
 
 def _sentence_split(text: str) -> list:
     return [s.strip() for s in re.split(r'[.!?]\s*', text) if s.strip()]
-
-def _safe_score(raw: float) -> float:
-    """
-    Clamp reward to the STRICTLY open interval (0, 1).
-    Values of exactly 0.0 or 1.0 are rejected by the Phase 2 validator.
-    eps=1e-4 survives round(..., 4): 0.0001 and 0.9999 are the boundary values.
-    """
-    eps = 1e-4
-    return round(max(eps, min(1.0 - eps, float(raw))), 4)
 
 # -------------------------
 # Environment
@@ -198,8 +182,7 @@ class EmailTriageEnvironment:
         valid, msg = _validate_action_fields(action)
         if not valid:
             raw_reward = -0.5
-            # FIX: use _safe_score so result is never exactly 0.0
-            external_reward = _safe_score(raw_reward)
+            external_reward = round(max(0.0, min(1.0, raw_reward)), 4)
             feedback = f"Invalid action: {msg}"
             self._state.steps += 1
             self._state.total_reward += external_reward
@@ -318,7 +301,7 @@ class EmailTriageEnvironment:
                 else:
                     try:
                         score, reason = llm_judge_score(email["subject"], email["body"], draft)
-                        norm = _normalize_llm_score(score, scale=1.0)
+                        norm = _normalize_llm_score(score, scale=5.0)
                         reward += norm * 0.4
                         feedback_items.append(f"Reply quality (LLM): {norm:.3f} ({reason})")
                         reason_tags.append("llm_judge")
@@ -329,9 +312,9 @@ class EmailTriageEnvironment:
 
         reward += self._rng.uniform(-0.02, 0.02)
 
-        # FIX: use _safe_score so external_reward is never exactly 0.0 or 1.0
-        raw_reward = round(max(-1.0, min(1.0, reward)), 4)
-        external_reward = _safe_score(raw_reward)
+        raw_reward = max(-1.0, min(1.0, reward))
+        raw_reward = round(raw_reward, 4)
+        external_reward = round(max(0.0, min(1.0, raw_reward)), 4)
 
         self._state.total_reward += external_reward
         self._state.steps += 1
@@ -420,7 +403,7 @@ class EmailTriageEnvironment:
             "sender": e.get("sender", ""),
             "task_id": task_id,
             "task_description": f"TASK {task_id}: " + ("Classify" if task_id == 1 else "Triage and reply"),
-            "reward": _safe_score(reward),  # FIX: never 0.0 or 1.0
+            "reward": reward,
             "done": done,
             "feedback": feedback,
             "feature_hints": feature_hints,
