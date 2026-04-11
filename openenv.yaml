@@ -24,6 +24,12 @@ docker:
     - API_BASE_URL
     - MODEL_NAME
     - HF_TOKEN
+    - DEBUG_ACTIONS
+    - ENV_URL
+    - PORT
+
+secrets:
+  - HF_TOKEN
 
 endpoints:
   health: /health
