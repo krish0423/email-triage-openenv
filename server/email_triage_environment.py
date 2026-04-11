@@ -395,9 +395,10 @@ class EmailTriageEnvironment:
         return self._make_observation(reward=external_reward, raw_reward=raw_reward, done=done, feedback=" | ".join(feedback_items))
 
     def state(self) -> TriageState:
-        if self._state:
-            return self._state
-        return TriageState(episode_id="not_started", current_task_id=0, total_reward=0.0, steps=0, completed=False)
+     if self._state:
+        self._state.total_reward = max(0.01, min(0.99, self._state.total_reward))
+        return self._state
+     return TriageState(episode_id="not_started", current_task_id=0, total_reward=0.01, steps=0, completed=False)
 
     def _make_observation(self, reward: float, raw_reward: float, done: bool, feedback: str) -> Dict[str, Any]:
         e = self._current_email or {}

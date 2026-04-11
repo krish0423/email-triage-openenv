@@ -75,7 +75,7 @@ async def metadata():
                 "difficulty": "easy",
                 "max_steps": 10,
                 "description": "Classify an email into the correct category.",
-                "score_range": [0.0, 1.0],
+                "score_range": [0.01, 0.99], 
                 "grader_dimensions": ["classification_accuracy"],
             },
             {
@@ -84,7 +84,7 @@ async def metadata():
                 "difficulty": "medium",
                 "max_steps": 10,
                 "description": "Classify, set priority, and route to the correct department.",
-                "score_range": [0.0, 1.0],
+                "score_range": [0.01, 0.99],
                 "grader_dimensions": [
                     "classification_accuracy",
                     "priority_accuracy",
@@ -97,7 +97,7 @@ async def metadata():
                 "difficulty": "hard",
                 "max_steps": 10,
                 "description": "Full triage including a professional draft response to the customer.",
-                "score_range": [0.0, 1.0],
+                "score_range": [0.01, 0.99],
                 "grader_dimensions": [
                     "classification_accuracy",
                     "priority_accuracy",
@@ -155,7 +155,7 @@ async def list_tasks():
                 "name": "Email Classification",
                 "difficulty": "easy",
                 "description": "Classify an email into the correct category.",
-                "reward_range": [0.0, 1.0],
+                "reward_range": [0.01, 0.99],
                 "grader_dimensions": ["classification_accuracy"],
             },
             {
@@ -163,7 +163,7 @@ async def list_tasks():
                 "name": "Prioritization & Routing",
                 "difficulty": "medium",
                 "description": "Classify, set priority, and route to the correct department.",
-                "reward_range": [0.0, 1.0],
+                "reward_range": [0.01, 0.99],
                 "grader_dimensions": [
                     "classification_accuracy",
                     "priority_accuracy",
@@ -175,7 +175,7 @@ async def list_tasks():
                 "name": "Full Triage with Draft Reply",
                 "difficulty": "hard",
                 "description": "Full triage including a professional draft response to the customer.",
-                "reward_range": [0.0, 1.0],
+                "reward_range": [0.01, 0.99],
                 "grader_dimensions": [
                     "classification_accuracy",
                     "priority_accuracy",
