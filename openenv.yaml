@@ -48,7 +48,7 @@ tasks:
       to detect social engineering attempts.
     grader:
       type: programmatic
-      score_range: [0.01, 0.99]
+      score_range: [0.0, 1.0]
       dimensions:
         - classification_accuracy
 
@@ -63,7 +63,7 @@ tasks:
       urgency signals and organizational routing rules.
     grader:
       type: programmatic
-      score_range: [0.01, 0.99]
+      score_range: [0.0, 1.0]
       dimensions:
         - classification_accuracy
         - priority_accuracy
@@ -81,7 +81,7 @@ tasks:
       penalty.
     grader:
       type: programmatic
-      score_range: [0.01, 0.99]
+      score_range: [0.0, 1.0]
       dimensions:
         - classification_accuracy
         - priority_accuracy

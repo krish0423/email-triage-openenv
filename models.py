@@ -1,4 +1,4 @@
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field
 from typing import Optional, Literal, Dict, Any, List
 
 
@@ -6,40 +6,36 @@ from typing import Optional, Literal, Dict, Any, List
 
 class TriageAction(BaseModel):
     """Action submitted by the agent for any task."""
-    # Task 1 – classify (phishing added as a security-aware category)
-    category: Optional[Literal["billing", "technical", "general", "complaint", "refund", "phishing", "account"]] = None
 
-    # Task 2 – classify + prioritize + route
+    # Task 1 — category only
+    # NOTE: must match openenv.yaml action_space enum exactly — no "account"
+    category: Optional[Literal[
+        "billing", "technical", "general", "complaint", "refund", "phishing"
+    ]] = None
+
+    # Task 2 — add priority + department
     priority: Optional[Literal["P1", "P2", "P3"]] = None
     department: Optional[Literal[
-    "billing_team", "technical_team", "customer_success", "returns", "security"
-]] = None
+        "billing_team", "technical_team", "customer_success", "returns", "security"
+    ]] = None
 
-
-    # Task 3 – full triage with drafted reply
+    # Task 3 — add draft reply
     draft_reply: Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}  # replaces class Config in Pydantic v2
 
     def validate_for_task(self, task_id: int) -> List[str]:
-        """
-        Lightweight validation helper the trainer/agent can call before sending action.
-        Returns a list of error messages (empty if valid).
-        """
         errors: List[str] = []
-        if task_id >= 1:
-            if self.category is None:
-                errors.append("category is required for task >= 1")
+        if task_id >= 1 and self.category is None:
+            errors.append("category is required for task >= 1")
         if task_id >= 2:
             if self.priority is None:
                 errors.append("priority is required for task >= 2")
             if self.department is None:
                 errors.append("department is required for task >= 2")
         if task_id == 3:
-         if not self.draft_reply or len(self.draft_reply.split()) < 50:
-           errors.append("draft_reply must be >= 50 words for task 3")
-
+            if not self.draft_reply or len(self.draft_reply.split()) < 50:
+                errors.append("draft_reply must be >= 50 words for task 3")
         return errors
 
 
@@ -47,36 +43,52 @@ class TriageAction(BaseModel):
 
 class TriageObservation(BaseModel):
     """What the agent sees after reset() or step()."""
-    email_id: str
-    subject: str
-    body: str
-    sender: str
-    task_id: int          # 1, 2, or 3
+    email_id:         str
+    subject:          str
+    body:             str
+    sender:           str
+    task_id:          str   # string slug e.g. "task1_email_classification"
     task_description: str
-    reward: float = 0.0
-    done: bool = False
-    feedback: str = ""    # Grader feedback for the agent
+    max_steps:        int   = 25     # per-task step limit; inference.py reads this
+    reward:           float = 0.01   # default is clamped minimum, never 0.0
+    done:             bool  = False
+    feedback:         str   = ""
 
-    # Optional hints / metadata from dataset/environment for explainability and features
-    feature_hints: Optional[Dict[str, Any]] = None
-    # convenience top-level fields (also available inside feature_hints)
-    persona: Optional[str] = None
+    feature_hints:    Optional[Dict[str, Any]] = None
+    persona:          Optional[str] = None
     language_variant: Optional[str] = None
-    difficulty: Optional[str] = None
+    difficulty:       Optional[str] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 
-# ── State ─────────────────────────────────────────────────────────────────────
+# ── Reward ───────────────────────────────────────────────────────────────────
+
+class TriageRewardBreakdown(BaseModel):
+    """Per-dimension reward scores matching openenv.yaml grader dimensions."""
+    classification_accuracy: float = Field(default=0.01, ge=0.01, le=0.99)
+    priority_accuracy:       float = Field(default=0.01, ge=0.01, le=0.99)
+    routing_accuracy:        float = Field(default=0.01, ge=0.01, le=0.99)
+    reply_quality:           float = Field(default=0.01, ge=0.01, le=0.99)
+
+
+class TriageReward(BaseModel):
+    """Reward signal returned by the grader. Value is strictly in (0.01, 0.99)."""
+    value:     float = Field(default=0.01, ge=0.01, le=0.99)
+    breakdown: TriageRewardBreakdown = Field(default_factory=TriageRewardBreakdown)
+    feedback:  str   = Field(default="")
+
+    model_config = {"from_attributes": True}
+
+
+# ── State ────────────────────────────────────────────────────────────────────
 
 class TriageState(BaseModel):
-    """Internal episode state."""
-    episode_id: str
-    current_task_id: int = 1
-    total_reward: float = 0.0
-    steps: int = 0
-    completed: bool = False
+    """Internal episode state returned by GET /state."""
+    episode_id:      str
+    current_task_id: str   = "task1_email_classification"  # string slug
+    total_reward:    float = 0.0
+    steps:           int   = 0
+    completed:       bool  = False
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}

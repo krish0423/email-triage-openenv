@@ -340,7 +340,6 @@ def run_task(task_id: str) -> float:
 
             obs = result
             step_reward = float(obs.get("reward", 0.0))
-            step_reward = max(0.01, min(0.99, step_reward))
             done = obs.get("done", False)
             cumulative_reward += step_reward
             step_rewards.append(step_reward)
