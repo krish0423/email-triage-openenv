@@ -86,7 +86,7 @@ def _sentence_split(text: str) -> list:
 
 def _clamp(r: float) -> float:
     """Clamp reward to strictly open interval (0, 1). Safe for 2dp formatting."""
-    return round(max(0.01, min(0.99, float(r))), 4)
+    return round(max(0.01, min(0.99, float(r))), 2)
 
 # -------------------------
 # Environment
@@ -130,7 +130,7 @@ class EmailTriageEnvironment:
 
         return self._make_observation(
             reward=0.01,
-            raw_reward=0.01,
+            raw_reward=0.0,
             done=False,
             feedback=f"Task {phase} started. Classify this email."
         )

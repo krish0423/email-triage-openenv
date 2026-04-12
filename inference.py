@@ -59,16 +59,26 @@ def clamp_reward(r: float) -> float:
 
 
 # ── Structured logging (stdout — evaluator reads stdout) ─────────────────────
+# ── Structured logging (stdout — evaluator reads stdout) ─────────────────────
 def emit_start(task_id: str) -> None:
-    print(f"[START] task={task_id}", flush=True)
+    print(f"[START] task={task_id} env={ENV_NAME} model={MODEL_NAME}", flush=True)
 
 
-def emit_step(step: int, reward: float) -> None:
-    print(f"[STEP] step={step} reward={clamp_reward(reward):.4f}", flush=True)
+def emit_step(step: int, action_dict: dict, reward: float, done: bool, error: Optional[str] = None) -> None:
+    action_str = json.dumps(action_dict, separators=(",", ":"))
+    done_str   = "true" if done else "false"
+    error_str  = error if error else "null"
+    print(
+        f"[STEP] step={step} action={action_str} "
+        f"reward={clamp_reward(reward):.2f} done={done_str} error={error_str}",
+        flush=True,
+    )
 
 
-def emit_end(task_id: str, score: float, steps: int) -> None:
-    print(f"[END] task={task_id} score={clamp_reward(score):.4f} steps={steps}", flush=True)
+def emit_end(success: bool, steps: int, rewards: list) -> None:
+    success_str  = "true" if success else "false"
+    rewards_str  = ",".join(f"{clamp_reward(r):.2f}" for r in rewards)
+    print(f"[END] success={success_str} steps={steps} rewards={rewards_str}", flush=True)
 
 
 # ── LLM client ───────────────────────────────────────────────────────────────
@@ -295,8 +305,8 @@ def run_task(task_id_str: str) -> float:
         resp.raise_for_status()
         reset_result = resp.json()
     except Exception as e:
-        print(f"  [reset error] {e}", flush=True)
-        emit_end(task_id_str, 0.01, 0)
+        print(f"  [reset error] {e}", file=sys.stderr, flush=True)
+        emit_end(success=False, steps=0, rewards=[0.01])
         return 0.01
 
     # Support both flat and nested observation formats
@@ -338,14 +348,14 @@ def run_task(task_id_str: str) -> float:
             action_dict = parse_action(llm_response)
         except Exception as e:
             error_msg = str(e)
-            print(f"  [Step {step_count}] LLM error: {error_msg}", flush=True)
+            print(f"  [Step {step_count}] LLM error: {error_msg}", file=sys.stderr, flush=True)
 
         # Fall back to rule-based action if LLM fails or returns unparseable output
         if action_dict is None:
             action_dict = get_fallback_action(current_task_id, obs)
             if not error_msg:
                 error_msg = "LLM parse failed — using fallback"
-            print(f"  [Step {step_count}] Fallback: {action_dict.get('category')}", flush=True)
+            print(f"  [Step {step_count}] Fallback: {action_dict.get('category')}", file=sys.stderr, flush=True)
 
         action_dict = validate_action(action_dict, current_task_id)
 
@@ -359,8 +369,8 @@ def run_task(task_id_str: str) -> float:
             resp.raise_for_status()
             result = resp.json()
         except Exception as e:
-            print(f"  [Step {step_count}] Step error: {e}", flush=True)
-            emit_step(step_count, 0.01)
+            print(f"  [Step {step_count}] Step error: {e}", file=sys.stderr, flush=True)
+            emit_step(step_count, action_dict or {}, 0.01, done=True, error=str(e))
             step_rewards.append(0.01)
             break
 
@@ -379,15 +389,15 @@ def run_task(task_id_str: str) -> float:
         step_rewards.append(step_reward)
         final_score = step_reward  # last step reward = episode score
 
-        emit_step(step_count, step_reward)
+        emit_step(step_count, action_dict, step_reward, done, error_msg)
 
         print(
             f"  [Step {step_count}] category={action_dict.get('category')} "
             f"reward={step_reward:.4f} done={done}",
-            flush=True,
+            file=sys.stderr, flush=True,
         )
 
-    emit_end(task_id_str, final_score, step_count)
+    emit_end(success=len(step_rewards) > 0, steps=step_count, rewards=step_rewards)
     return final_score
 
 
