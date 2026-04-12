@@ -75,10 +75,11 @@ def emit_step(step: int, action_dict: dict, reward: float, done: bool, error: Op
     )
 
 
-def emit_end(success: bool, steps: int, rewards: list) -> None:
+def emit_end(success: bool, steps: int, score: float, rewards: list) -> None:
     success_str  = "true" if success else "false"
+    score_str    = f"{float(score):.2f}"
     rewards_str  = ",".join(f"{clamp_reward(r):.2f}" for r in rewards)
-    print(f"[END] success={success_str} steps={steps} rewards={rewards_str}", flush=True)
+    print(f"[END] success={success_str} steps={steps} score={score_str} rewards={rewards_str}", flush=True)
 
 
 # ── LLM client ───────────────────────────────────────────────────────────────
@@ -306,7 +307,7 @@ def run_task(task_id_str: str) -> float:
         reset_result = resp.json()
     except Exception as e:
         print(f"  [reset error] {e}", file=sys.stderr, flush=True)
-        emit_end(success=False, steps=0, rewards=[0.01])
+        emit_end(success=False, steps=0, score=0.01, rewards=[0.01])
         return 0.01
 
     # Support both flat and nested observation formats
@@ -397,7 +398,7 @@ def run_task(task_id_str: str) -> float:
             file=sys.stderr, flush=True,
         )
 
-    emit_end(success=len(step_rewards) > 0, steps=step_count, rewards=step_rewards)
+    emit_end(success=len(step_rewards) > 0, steps=step_count, score=final_score, rewards=step_rewards)
     return final_score
 
 
