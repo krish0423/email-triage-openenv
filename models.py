@@ -5,26 +5,35 @@ from typing import Optional, Literal, Dict, Any, List
 # ── Actions ──────────────────────────────────────────────────────────────────
 
 class TriageAction(BaseModel):
-    """Action submitted by the agent for any task."""
+    """
+    Action submitted by the agent for each task.
 
-    # Task 1 — category only
-    # NOTE: must match openenv.yaml action_space enum exactly — no "account"
+    Task 1 — category only
+    Task 2 — category + priority + department
+    Task 3 — category + priority + department + draft_reply (>=100 words)
+
+    All enums must exactly match openenv.yaml action_space declarations.
+    """
+
     category: Optional[Literal[
         "billing", "technical", "general", "complaint", "refund", "phishing"
     ]] = None
 
-    # Task 2 — add priority + department
     priority: Optional[Literal["P1", "P2", "P3"]] = None
+
     department: Optional[Literal[
         "billing_team", "technical_team", "customer_success", "returns", "security"
     ]] = None
 
-    # Task 3 — add draft reply
     draft_reply: Optional[str] = None
 
-    model_config = {"from_attributes": True}  # replaces class Config in Pydantic v2
+    model_config = {"from_attributes": True}
 
     def validate_for_task(self, task_id: int) -> List[str]:
+        """
+        Lightweight pre-send validation. Returns a list of error strings
+        (empty list means action is valid for this task).
+        """
         errors: List[str] = []
         if task_id >= 1 and self.category is None:
             errors.append("category is required for task >= 1")
@@ -34,7 +43,6 @@ class TriageAction(BaseModel):
             if self.department is None:
                 errors.append("department is required for task >= 2")
         if task_id == 3:
-            # env.py enforces a 100-word minimum for draft_reply
             if not self.draft_reply or len(self.draft_reply.split()) < 100:
                 errors.append("draft_reply must be >= 100 words for task 3")
         return errors
@@ -43,23 +51,30 @@ class TriageAction(BaseModel):
 # ── Observations ─────────────────────────────────────────────────────────────
 
 class TriageObservation(BaseModel):
-    """What the agent sees after reset() or step()."""
+    """
+    What the agent sees after /reset or /step.
+
+    task_id is a numeric int (1, 2, 3) matching the server's internal
+    phase representation. Inference code maps string task IDs to these
+    integers via TASK_PHASE.
+    """
+
     email_id:         str
     subject:          str
     body:             str
     sender:           str
-    # numeric task id to match env.py (1, 2, 3)
-    task_id:          int   # numeric task id e.g. 1, 2, 3
+    task_id:          int           # 1, 2, or 3 — numeric, not the string slug
     task_description: str
-    max_steps:        int   = 25     # per-task step limit; inference.py reads this
-    reward:           float = 0.01   # default is clamped minimum, never 0.0
+    max_steps:        int   = 10    # must match openenv.yaml per-task max_steps (all tasks = 10)
+    reward:           float = 0.01  # clamped minimum — never 0.0 (evaluator rejects exact 0)
     done:             bool  = False
-    feedback:         str   = ""
+    feedback:         str   = ""    # grader feedback for agent to learn from
 
+    # Optional enrichment from the email dataset
     feature_hints:    Optional[Dict[str, Any]] = None
-    persona:          Optional[str] = None
-    language_variant: Optional[str] = None
-    difficulty:       Optional[str] = None
+    persona:          Optional[str]             = None
+    language_variant: Optional[str]             = None
+    difficulty:       Optional[str]             = None
 
     model_config = {"from_attributes": True}
 
@@ -67,18 +82,34 @@ class TriageObservation(BaseModel):
 # ── Reward ───────────────────────────────────────────────────────────────────
 
 class TriageRewardBreakdown(BaseModel):
-    """Per-dimension reward scores matching openenv.yaml grader dimensions."""
+    """
+    Per-dimension scores matching openenv.yaml grader dimensions.
+    Unused dimensions default to 0.01 (floor) for tasks that don't score them.
+
+    Task 1: only classification_accuracy is active
+    Task 2: classification_accuracy + priority_accuracy + routing_accuracy
+    Task 3: all four dimensions
+    """
+
     classification_accuracy: float = Field(default=0.01, ge=0.01, le=0.99)
-    priority_accuracy:       float = Field(default=0.01, ge=0.01, le=0.99)
-    routing_accuracy:        float = Field(default=0.01, ge=0.01, le=0.99)
-    reply_quality:           float = Field(default=0.01, ge=0.01, le=0.99)
+    priority_accuracy:        float = Field(default=0.01, ge=0.01, le=0.99)
+    routing_accuracy:         float = Field(default=0.01, ge=0.01, le=0.99)
+    reply_quality:            float = Field(default=0.01, ge=0.01, le=0.99)
+
+    model_config = {"from_attributes": True}
 
 
 class TriageReward(BaseModel):
-    """Reward signal returned by the grader. Value is strictly in (0.01, 0.99)."""
-    value:     float = Field(default=0.01, ge=0.01, le=0.99)
-    breakdown: TriageRewardBreakdown = Field(default_factory=TriageRewardBreakdown)
-    feedback:  str   = Field(default="")
+    """
+    Reward signal returned by /step.
+    value is strictly within (0.01, 0.99) — evaluator rejects 0.0 and 1.0.
+    """
+
+    value:      float                = Field(default=0.01, ge=0.01, le=0.99)
+    step_reward: float               = Field(default=0.01, ge=0.01, le=0.99)
+    cumulative:  float               = Field(default=0.01, ge=0.01, le=0.99)
+    breakdown:  TriageRewardBreakdown = Field(default_factory=TriageRewardBreakdown)
+    feedback:   str                  = Field(default="")
 
     model_config = {"from_attributes": True}
 
@@ -86,11 +117,14 @@ class TriageReward(BaseModel):
 # ── State ────────────────────────────────────────────────────────────────────
 
 class TriageState(BaseModel):
-    """Internal episode state returned by GET /state."""
+    """
+    Internal episode state returned by GET /state.
+    total_reward accumulates across steps within an episode.
+    """
+
     episode_id:      str
-    # numeric current_task_id to match env.py internal representation
-    current_task_id: int   = 1
-    total_reward:    float = 0.01
+    current_task_id: int   = 1     # numeric (1, 2, 3)
+    total_reward:    float = 0.01  # clamped — never 0.0
     steps:           int   = 0
     completed:       bool  = False
 

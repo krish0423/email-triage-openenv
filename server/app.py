@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 
-from models import TriageAction, TriageObservation, TriageState
+from models import TriageAction, TriageObservation, TriageReward, TriageState  # ← TriageReward added
 from server.email_triage_environment import EmailTriageEnvironment
 
 app = FastAPI(
@@ -25,9 +25,9 @@ app = FastAPI(
 env = EmailTriageEnvironment()
 
 TASK_MAP = {
-    "task1_email_classification": 1,
+    "task1_email_classification":  1,
     "task2_prioritization_routing": 2,
-    "task3_full_triage_reply": 3,
+    "task3_full_triage_reply":      3,
 }
 
 
@@ -37,10 +37,10 @@ class ResetRequest(BaseModel):
 
 class StepRequest(BaseModel):
     action: Optional[TriageAction] = None
-    # Also accept flat action fields for backward compatibility
-    category: Optional[str] = None
-    priority: Optional[str] = None
-    department: Optional[str] = None
+    # Flat fields accepted for backward compatibility
+    category:    Optional[str] = None
+    priority:    Optional[str] = None
+    department:  Optional[str] = None
     draft_reply: Optional[str] = None
 
 
@@ -91,7 +91,10 @@ async def metadata():
                 "max_steps": 10,
                 "description": "Full triage including a professional draft response.",
                 "score_range": [0.01, 0.99],
-                "grader_dimensions": ["classification_accuracy", "priority_accuracy", "routing_accuracy", "reply_quality"],
+                "grader_dimensions": [
+                    "classification_accuracy", "priority_accuracy",
+                    "routing_accuracy", "reply_quality",
+                ],
             },
         ],
     }
@@ -101,9 +104,10 @@ async def metadata():
 @app.get("/schema")
 async def schema():
     return {
-        "action": TriageAction.model_json_schema(),
+        "action":      TriageAction.model_json_schema(),
         "observation": TriageObservation.model_json_schema(),
-        "state": TriageState.model_json_schema(),
+        "reward":      TriageReward.model_json_schema(),   # ← was missing
+        "state":       TriageState.model_json_schema(),
     }
 
 
@@ -111,20 +115,18 @@ async def schema():
 @app.post("/reset")
 async def reset(req: Optional[ResetRequest] = None):
     task_id_str = req.task_id if req else None
-    phase = TASK_MAP.get(task_id_str, 1) if task_id_str else 1
-    obs_dict = env.reset(phase=phase)
+    phase       = TASK_MAP.get(task_id_str, 1) if task_id_str else 1
+    obs_dict    = env.reset(phase=phase)
 
-    # Extract reward and done from the flat obs dict
     reward_val = max(0.01, min(0.99, float(obs_dict.get("reward", 0.01))))
 
-    # Return in standard OpenEnv format: {observation, reward, done, info}
     return {
         "observation": obs_dict,
         "reward": {
-            "value": reward_val,
+            "value":       reward_val,
             "step_reward": reward_val,
-            "cumulative": reward_val,
-            "feedback": obs_dict.get("feedback", ""),
+            "cumulative":  reward_val,
+            "feedback":    obs_dict.get("feedback", ""),
         },
         "done": obs_dict.get("done", False),
         "info": {},
@@ -135,7 +137,7 @@ async def reset(req: Optional[ResetRequest] = None):
 @app.post("/step")
 async def step(req: StepRequest):
     try:
-        # Build TriageAction from either nested action or flat fields
+        # Build TriageAction from either nested or flat fields
         if req.action:
             action = req.action
         else:
@@ -148,31 +150,40 @@ async def step(req: StepRequest):
 
         obs_dict = env.step(action)
 
-        # Extract and clamp reward
         reward_val = max(0.01, min(0.99, float(obs_dict.get("reward", 0.01))))
-        cumulative = max(0.01, min(0.99, float(env.state().total_reward)))
 
-        # Return in standard OpenEnv format
+        # Guard against env.state() failing before first reset or on error
+        try:
+            cumulative = max(0.01, min(0.99, float(env.state().total_reward)))
+        except Exception:
+            cumulative = reward_val
+
         return {
             "observation": obs_dict,
             "reward": {
-                "value": reward_val,
+                "value":       reward_val,
                 "step_reward": reward_val,
-                "cumulative": cumulative,
-                "feedback": obs_dict.get("feedback", ""),
+                "cumulative":  cumulative,
+                "feedback":    obs_dict.get("feedback", ""),
             },
             "done": obs_dict.get("done", False),
             "info": {},
         }
+
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:                                          # ← broadened
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ------------------ STATE ------------------
 @app.get("/state")
 async def state():
-    s = env.state()
-    return s.model_dump()
+    try:
+        s = env.state()
+        return s.model_dump()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"State unavailable: {e}")
 
 
 # ------------------ TASKS ------------------
@@ -181,23 +192,23 @@ async def list_tasks():
     return {
         "tasks": [
             {
-                "task_id": "task1_email_classification",
-                "name": "Email Classification",
-                "difficulty": "easy",
+                "task_id":     "task1_email_classification",
+                "name":        "Email Classification",
+                "difficulty":  "easy",
                 "description": "Classify an email into the correct category.",
                 "reward_range": [0.01, 0.99],
             },
             {
-                "task_id": "task2_prioritization_routing",
-                "name": "Prioritization & Routing",
-                "difficulty": "medium",
+                "task_id":     "task2_prioritization_routing",
+                "name":        "Prioritization & Routing",
+                "difficulty":  "medium",
                 "description": "Classify, set priority, and route to the correct department.",
                 "reward_range": [0.01, 0.99],
             },
             {
-                "task_id": "task3_full_triage_reply",
-                "name": "Full Triage with Draft Reply",
-                "difficulty": "hard",
+                "task_id":     "task3_full_triage_reply",
+                "name":        "Full Triage with Draft Reply",
+                "difficulty":  "hard",
                 "description": "Full triage including a professional draft response.",
                 "reward_range": [0.01, 0.99],
             },

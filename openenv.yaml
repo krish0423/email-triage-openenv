@@ -26,9 +26,6 @@ env_vars:
   - MODEL_NAME
   - HF_TOKEN
 
-secrets:
-  - HF_TOKEN
-
 endpoints:
   health: /health
   metadata: /metadata
@@ -133,5 +130,5 @@ observation_space:
         persona: string
         language_variant: string
 
-supports_concurrent_sessions: true
+supports_concurrent_sessions: false
 max_concurrent_envs: 5
