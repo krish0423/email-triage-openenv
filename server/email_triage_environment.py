@@ -53,9 +53,10 @@ def _normalize_llm_score(score: float, scale: float = 5.0) -> float:
     try:
         s = float(score)
     except Exception:
-        return 0.0
+        return 0.01
     s = max(0.0, min(scale, s))
-    return s / scale
+    normalized = s / scale
+    return max(0.01, min(0.99, normalized))
 
 def _log_step(entry: Dict[str, Any]):
     entry["timestamp"] = time.time()
@@ -115,7 +116,7 @@ class EmailTriageEnvironment:
         self._state = TriageState(
             episode_id=str(uuid.uuid4()),
             current_task_id=phase,
-            total_reward=0.0,
+            total_reward=0.01,
             steps=0,
             completed=False
         )
@@ -129,7 +130,7 @@ class EmailTriageEnvironment:
 
         return self._make_observation(
             reward=0.01,
-            raw_reward=0.0,
+            raw_reward=0.01,
             done=False,
             feedback=f"Task {phase} started. Classify this email."
         )
@@ -141,7 +142,7 @@ class EmailTriageEnvironment:
 
         valid, msg = _validate_action_fields(action)
         if not valid:
-            raw_reward = -0.5
+            raw_reward = 0.01  # invalid action gets minimum score
             external_reward = _clamp(raw_reward)
             feedback = f"Invalid action: {msg}"
             self._state.steps += 1
@@ -248,6 +249,8 @@ class EmailTriageEnvironment:
 
         raw_reward = round(max(-1.0, min(1.0, reward)), 4)
         external_reward = _clamp(raw_reward)
+        # Ensure raw_reward exposed in observation is also strictly in (0, 1)
+        clamped_raw = _clamp(raw_reward)
 
         # Single step — always done
         self._state.steps += 1
@@ -286,7 +289,7 @@ class EmailTriageEnvironment:
 
         return self._make_observation(
             reward=external_reward,
-            raw_reward=raw_reward,
+            raw_reward=clamped_raw,
             done=True,
             feedback=" | ".join(feedback_items)
         )
@@ -311,6 +314,10 @@ class EmailTriageEnvironment:
             "persona": e.get("persona"),
             "language_variant": e.get("language_variant")
         }
+
+        # Final safety clamp — no reward value may be exactly 0.0 or 1.0
+        reward = max(0.01, min(0.99, float(reward)))
+        raw_reward = max(0.01, min(0.99, float(raw_reward)))
 
         return {
             "email_id": e.get("email_id"),

@@ -90,7 +90,7 @@ class TriageState(BaseModel):
     episode_id:      str
     # numeric current_task_id to match env.py internal representation
     current_task_id: int   = 1
-    total_reward:    float = 0.0
+    total_reward:    float = 0.01
     steps:           int   = 0
     completed:       bool  = False
 

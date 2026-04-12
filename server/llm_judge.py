@@ -100,8 +100,8 @@ def llm_judge_score(
         json_text = raw[start:end] if start != -1 and end != -1 and end > start else raw
 
         data = json.loads(json_text.strip())
-        score = float(data.get("score", 0.0))
-        score = max(0.0, min(1.0, score))   # clamp
+        score = float(data.get("score", 0.5))
+        score = max(0.01, min(0.99, score))   # clamp strictly within (0, 1)
         reason = data.get("reasoning", "LLM judged")
         return score, reason
 
@@ -118,9 +118,9 @@ def _heuristic_score(draft: str) -> Tuple[float, str]:
     Max 1.0.
     """
     if not draft or len(draft.strip()) < 20:
-        return 0.0, "Reply too short or missing."
+        return 0.01, "Reply too short or missing."
 
-    score = 0.0
+    score = 0.01
     reasons = []
 
     # Length tiers (character-based but roughly correlates to words)
@@ -156,4 +156,4 @@ def _heuristic_score(draft: str) -> Tuple[float, str]:
     if has_closing:
         score += 0.1
 
-    return round(min(score, 1.0), 4), ", ".join(reasons) or "heuristic scored"
+    return round(max(0.01, min(score, 0.99)), 4), ", ".join(reasons) or "heuristic scored"
