@@ -262,7 +262,7 @@ class EmailTriageEnvironment:
             "episode_id": self._state.episode_id,
             "email_id": email.get("email_id"),
             "action": action.dict() if hasattr(action, "dict") else str(action),
-            "raw_reward": raw_reward,
+            "raw_reward": clamped_raw,
             "reward": external_reward,
             "task_id": task_id,
             "reason_tags": reason_tags
@@ -280,7 +280,7 @@ class EmailTriageEnvironment:
                 "department": action.department,
                 "draft_word_count": len((action.draft_reply or "").split())
             },
-            "raw_reward": raw_reward,
+            "raw_reward": clamped_raw,
             "reward": external_reward,
             "done": True,
             "feedback": feedback_items,

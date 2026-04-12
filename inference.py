@@ -299,21 +299,21 @@ def run_task(task_id_str: str) -> float:
 
 
 def main():
-    print("=" * 60, flush=True)
-    print("  Email Triage OpenEnv — Baseline Inference", flush=True)
-    print("=" * 60, flush=True)
-    print(f"  LLM endpoint : {API_BASE_URL}", flush=True)
-    print(f"  Model        : {MODEL_NAME}", flush=True)
-    print(f"  Environment  : {ENV_URL}", flush=True)
-    print(f"  Tasks        : {TASKS}", flush=True)
-    print(flush=True)
+    print("=" * 60, file=sys.stderr, flush=True)
+    print("  Email Triage OpenEnv — Baseline Inference", file=sys.stderr, flush=True)
+    print("=" * 60, file=sys.stderr, flush=True)
+    print(f"  LLM endpoint : {API_BASE_URL}", file=sys.stderr, flush=True)
+    print(f"  Model        : {MODEL_NAME}", file=sys.stderr, flush=True)
+    print(f"  Environment  : {ENV_URL}", file=sys.stderr, flush=True)
+    print(f"  Tasks        : {TASKS}", file=sys.stderr, flush=True)
+    print(file=sys.stderr, flush=True)
 
     try:
         resp = requests.get(f"{ENV_URL}/health", timeout=10)
         resp.raise_for_status()
-        print("  Environment health check: OK", flush=True)
+        print("  Environment health check: OK", file=sys.stderr, flush=True)
     except Exception as e:
-        print(f"  ERROR: Cannot reach environment at {ENV_URL}: {e}", flush=True)
+        print(f"  ERROR: Cannot reach environment at {ENV_URL}: {e}", file=sys.stderr, flush=True)
         sys.exit(1)
 
     scores = {}
@@ -325,17 +325,17 @@ def main():
 
     total_time = time.time() - start_time
 
-    print(f"\n{'=' * 60}", flush=True)
-    print("  RESULTS SUMMARY", flush=True)
-    print("=" * 60, flush=True)
+    print(f"\n{'=' * 60}", file=sys.stderr, flush=True)
+    print("  RESULTS SUMMARY", file=sys.stderr, flush=True)
+    print("=" * 60, file=sys.stderr, flush=True)
     for tid, score in scores.items():
         bar = "#" * int(score * 40) + "." * (40 - int(score * 40))
-        print(f"  {tid:40s} [{bar}] {score:.4f}", flush=True)
+        print(f"  {tid:40s} [{bar}] {score:.4f}", file=sys.stderr, flush=True)
 
     avg = sum(scores.values()) / len(scores) if scores else 0
-    print(f"\n  Average score: {avg:.4f}", flush=True)
-    print(f"  Total runtime: {total_time:.1f}s", flush=True)
-    print("=" * 60, flush=True)
+    print(f"\n  Average score: {avg:.4f}", file=sys.stderr, flush=True)
+    print(f"  Total runtime: {total_time:.1f}s", file=sys.stderr, flush=True)
+    print("=" * 60, file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":
